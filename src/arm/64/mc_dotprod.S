@@ -60,7 +60,6 @@ L(h_tbl_neon_dotprod):
         .byte  1,  2,  3,  4,   2,  3,  4,  5,   3,  4,  5,  6,   4,  5,  6,  7
         .byte  5,  6,  7,  8,   6,  7,  8,  9,   7,  8,  9, 10,   8,  9, 10, 11
         .byte  9, 10, 11, 12,  10, 11, 12, 13,  11, 12, 13, 14,  12, 13, 14, 15
-        .byte 13, 14, 15, 16,  14, 15, 16, 17,  15, 16, 17, 18,  16, 17, 18, 19
 
 // Vertical convolutions are also using SDOT instructions, where a 128-bit
 // register contains a transposed 4x4 matrix of values. Subsequent iterations of
@@ -86,7 +85,7 @@ function \op\()_8tap_\type\()_8bpc_\isa, export=1, align=FUNC_ALIGN
 endfunc
 .endm
 
-.macro filter_8tap_fn type, isa, dst, d_strd, src, s_strd, w, h, mx, my, xmx, xmy, ldst, lsrc, wd_strd
+.macro filter_8tap_fn type, dot, isa, dst, d_strd, src, s_strd, w, h, mx, my, xmx, xmy, ldst, lsrc, wd_strd
 make_8tap_fn \type, sharp,          SHARP1,   SHARP1,   \isa
 make_8tap_fn \type, sharp_smooth,   SHARP1,   SMOOTH1,  \isa
 make_8tap_fn \type, sharp_regular,  SHARP1,   REGULAR1, \isa
@@ -112,22 +111,22 @@ function \type\()_8tap_\isa, align=FUNC_ALIGN
         .align JUMP_ALIGN
 L(\type\()_8tap_v_\isa):
         madd            \my, \my, w11, w10
-.ifc \type, prep
-        mov             w8, 0x2002  // FILTER_WEIGHT * 128 + rounding
-.endif
-        sub             \src, \src, \s_strd
         ldr             q6, L(v_tbl_neon_dotprod)
+        sub             \src, \src, \s_strd
 .ifc \type, prep
+        mov             w8, 0x2002          // FILTER_WEIGHT * 128 + rounding
         dup             v4.4s, w8
+.else
+        movi            v4.4s, #32, lsl 8   // FILTER_WEIGHT * 128, bias for SDOT
 .endif
         ubfx            w11, \my, #7, #7
         and             \my, \my, #0x7F
         ldr             q28, L(v_tbl_neon_dotprod) + 16
         cmp             \h, #4
         csel            \my, \my, w11, le
-        sub             \src, \src, \s_strd, lsl #1     // src - src_stride * 3
-        ldr             q29, L(v_tbl_neon_dotprod) + 32
+        sub             \src, \src, \s_strd, lsl #1     // src - s_strd * 3
         add             \xmy, x12, \xmy, lsl #3         // subpel V filter address
+        ldr             q29, L(v_tbl_neon_dotprod) + 32
         movi            v5.16b, #128
         ldr             d7, [\xmy]
         cmp             \w, #8
@@ -193,38 +192,32 @@ L(\type\()_8tap_v_\isa):
 
         .align LOOP_ALIGN
 16:
-        ldr             q27, [\lsrc]
-        add             \lsrc, \lsrc, \s_strd
-.ifc \type, prep
+        ld1             {v27.16b}, [\lsrc], \s_strd
+
         mov             v0.16b, v4.16b
         mov             v1.16b, v4.16b
         mov             v2.16b, v4.16b
         mov             v3.16b, v4.16b
-.else
-        movi            v0.4s, #32, lsl 8   // 64 * 128, bias for SDOT
-        movi            v1.4s, #32, lsl 8
-        movi            v2.4s, #32, lsl 8
-        movi            v3.4s, #32, lsl 8
-.endif
+
         sub             v18.16b, v27.16b, v5.16b
         sub             v21.16b, v27.16b, v5.16b
         sub             v24.16b, v27.16b, v5.16b
         sub             v27.16b, v27.16b, v5.16b
 
-        sdot            v0.4s, v16.16b, v7.4b[0]
-        sdot            v1.4s, v19.16b, v7.4b[0]
-        sdot            v2.4s, v22.16b, v7.4b[0]
-        sdot            v3.4s, v25.16b, v7.4b[0]
+        \dot            v0.4s, v16.16b, v7.4b[0]
+        \dot            v1.4s, v19.16b, v7.4b[0]
+        \dot            v2.4s, v22.16b, v7.4b[0]
+        \dot            v3.4s, v25.16b, v7.4b[0]
 
         tbl             v16.16b, {v16.16b, v17.16b}, v6.16b
         tbl             v19.16b, {v19.16b, v20.16b}, v6.16b
         tbl             v22.16b, {v22.16b, v23.16b}, v6.16b
         tbl             v25.16b, {v25.16b, v26.16b}, v6.16b
 
-        sdot            v0.4s, v17.16b, v7.4b[1]
-        sdot            v1.4s, v20.16b, v7.4b[1]
-        sdot            v2.4s, v23.16b, v7.4b[1]
-        sdot            v3.4s, v26.16b, v7.4b[1]
+        \dot            v0.4s, v17.16b, v7.4b[1]
+        \dot            v1.4s, v20.16b, v7.4b[1]
+        \dot            v2.4s, v23.16b, v7.4b[1]
+        \dot            v3.4s, v26.16b, v7.4b[1]
 
         tbl             v17.16b, {v17.16b, v18.16b}, v28.16b
         tbl             v20.16b, {v20.16b, v21.16b}, v29.16b
@@ -238,33 +231,27 @@ L(\type\()_8tap_v_\isa):
         sshr            v0.8h, v0.8h, #2
         sshr            v1.8h, v2.8h, #2
         st1             {v0.8h, v1.8h}, [\ldst], \d_strd
-.else
+.else   // put
         sqrshrun        v0.8b, v0.8h, #6
         sqrshrun2       v0.16b, v2.8h, #6
         st1             {v0.16b}, [\ldst], \d_strd
 .endif
         b.gt            16b
 
-.ifc \type, prep
         mov             v0.16b, v4.16b
         mov             v1.16b, v4.16b
         mov             v2.16b, v4.16b
         mov             v3.16b, v4.16b
-.else
-        movi            v0.4s, #32, lsl 8   // 64 * 128, bias for SDOT
-        movi            v1.4s, #32, lsl 8
-        movi            v2.4s, #32, lsl 8
-        movi            v3.4s, #32, lsl 8
-.endif
-        sdot            v0.4s, v16.16b, v7.4b[0]
-        sdot            v1.4s, v19.16b, v7.4b[0]
-        sdot            v2.4s, v22.16b, v7.4b[0]
-        sdot            v3.4s, v25.16b, v7.4b[0]
 
-        sdot            v0.4s, v17.16b, v7.4b[1]
-        sdot            v1.4s, v20.16b, v7.4b[1]
-        sdot            v2.4s, v23.16b, v7.4b[1]
-        sdot            v3.4s, v26.16b, v7.4b[1]
+        \dot            v0.4s, v16.16b, v7.4b[0]
+        \dot            v1.4s, v19.16b, v7.4b[0]
+        \dot            v2.4s, v22.16b, v7.4b[0]
+        \dot            v3.4s, v25.16b, v7.4b[0]
+
+        \dot            v0.4s, v17.16b, v7.4b[1]
+        \dot            v1.4s, v20.16b, v7.4b[1]
+        \dot            v2.4s, v23.16b, v7.4b[1]
+        \dot            v3.4s, v26.16b, v7.4b[1]
 
         subs            \w, \w, #16
         uzp1            v0.8h, v0.8h, v1.8h
@@ -274,7 +261,7 @@ L(\type\()_8tap_v_\isa):
         sshr            v1.8h, v2.8h, #2
         stp             q0, q1, [\ldst]
         add             \dst, \dst, #32
-.else
+.else   // put
         sqrshrun        v0.8b, v0.8h, #6
         sqrshrun2       v0.16b, v2.8h, #6
         str             q0, [\ldst]
@@ -318,23 +305,17 @@ L(\type\()_8tap_v_\isa):
 .ifc \type, put
         b.eq            82f
 .endif
-
         .align LOOP_ALIGN
 8:
         ldr             d21, [\src]
         ldr             d27, [\src, \s_strd]
         add             \src, \src, \s_strd, lsl #1
-.ifc \type, prep
+
         mov             v0.16b, v4.16b
         mov             v1.16b, v4.16b
         mov             v2.16b, v4.16b
         mov             v3.16b, v4.16b
-.else
-        movi            v0.4s, #32, lsl 8   // 64 * 128, bias for SDOT
-        movi            v1.4s, #32, lsl 8
-        movi            v2.4s, #32, lsl 8
-        movi            v3.4s, #32, lsl 8
-.endif
+
         sub             v18.16b, v21.16b, v5.16b
         sub             v21.16b, v21.16b, v5.16b
         sub             v24.16b, v27.16b, v5.16b
@@ -345,20 +326,20 @@ L(\type\()_8tap_v_\isa):
         tbl             v23.16b, {v17.16b, v18.16b}, v28.16b
         tbl             v26.16b, {v20.16b, v21.16b}, v29.16b
 
-        sdot            v0.4s, v16.16b, v7.4b[0]
-        sdot            v0.4s, v17.16b, v7.4b[1]
-        sdot            v1.4s, v19.16b, v7.4b[0]
-        sdot            v1.4s, v20.16b, v7.4b[1]
+        \dot            v0.4s, v16.16b, v7.4b[0]
+        \dot            v0.4s, v17.16b, v7.4b[1]
+        \dot            v1.4s, v19.16b, v7.4b[0]
+        \dot            v1.4s, v20.16b, v7.4b[1]
 
         tbl             v16.16b, {v22.16b, v23.16b}, v6.16b
         tbl             v19.16b, {v25.16b, v26.16b}, v6.16b
         tbl             v17.16b, {v23.16b, v24.16b}, v28.16b
         tbl             v20.16b, {v26.16b, v27.16b}, v29.16b
 
-        sdot            v2.4s, v22.16b, v7.4b[0]
-        sdot            v2.4s, v23.16b, v7.4b[1]
-        sdot            v3.4s, v25.16b, v7.4b[0]
-        sdot            v3.4s, v26.16b, v7.4b[1]
+        \dot            v2.4s, v22.16b, v7.4b[0]
+        \dot            v2.4s, v23.16b, v7.4b[1]
+        \dot            v3.4s, v25.16b, v7.4b[0]
+        \dot            v3.4s, v26.16b, v7.4b[1]
 
         subs            \h, \h, #2
         uzp1            v0.8h, v0.8h, v1.8h
@@ -367,7 +348,7 @@ L(\type\()_8tap_v_\isa):
         sshr            v0.8h, v0.8h, #2
         sshr            v1.8h, v2.8h, #2
         stp             q0, q1, [\dst], #32
-.else
+.else   // put
         sqrshrun        v0.8b, v0.8h, #6
         sqrshrun        v1.8b, v2.8h, #6
         str             d0, [\dst]
@@ -379,18 +360,14 @@ L(\type\()_8tap_v_\isa):
 .ifc \type, put
         .align JUMP_ALIGN
 82:
+.endif
         ldr             d21, [\src]
-        movi            v0.4s, #32, lsl 8   // 64 * 128, bias for SDOT
-        movi            v1.4s, #32, lsl 8
-        movi            v2.4s, #32, lsl 8
-        movi            v3.4s, #32, lsl 8
-.else
-        ldr             d21, [\src]
+
         mov             v0.16b, v4.16b
         mov             v1.16b, v4.16b
         mov             v2.16b, v4.16b
         mov             v3.16b, v4.16b
-.endif
+
         sub             v18.16b, v21.16b, v5.16b
         sub             v21.16b, v21.16b, v5.16b
 
@@ -399,15 +376,15 @@ L(\type\()_8tap_v_\isa):
         tbl             v23.16b, {v17.16b, v18.16b}, v28.16b
         tbl             v26.16b, {v20.16b, v21.16b}, v29.16b
 
-        sdot            v0.4s, v16.16b, v7.4b[0]
-        sdot            v0.4s, v17.16b, v7.4b[1]
-        sdot            v1.4s, v19.16b, v7.4b[0]
-        sdot            v1.4s, v20.16b, v7.4b[1]
+        \dot            v0.4s, v16.16b, v7.4b[0]
+        \dot            v0.4s, v17.16b, v7.4b[1]
+        \dot            v1.4s, v19.16b, v7.4b[0]
+        \dot            v1.4s, v20.16b, v7.4b[1]
 
-        sdot            v2.4s, v22.16b, v7.4b[0]
-        sdot            v2.4s, v23.16b, v7.4b[1]
-        sdot            v3.4s, v25.16b, v7.4b[0]
-        sdot            v3.4s, v26.16b, v7.4b[1]
+        \dot            v2.4s, v22.16b, v7.4b[0]
+        \dot            v2.4s, v23.16b, v7.4b[1]
+        \dot            v3.4s, v25.16b, v7.4b[0]
+        \dot            v3.4s, v26.16b, v7.4b[1]
 
         uzp1            v0.8h, v0.8h, v1.8h
         uzp1            v2.8h, v2.8h, v3.8h
@@ -415,7 +392,7 @@ L(\type\()_8tap_v_\isa):
         sshr            v0.8h, v0.8h, #2
         sshr            v1.8h, v2.8h, #2
         stp             q0, q1, [\dst]
-.else
+.else   // put
         sqrshrun        v0.8b, v0.8h, #6
         sqrshrun        v1.8b, v2.8h, #6
         str             d0, [\dst]
@@ -457,33 +434,29 @@ L(\type\()_8tap_v_\isa):
 .ifc \type, put
         b.eq            42f
 .endif
-
         .align LOOP_ALIGN
 4:
         ldr             s18, [\src]
         ldr             s21, [\src, \s_strd]
         add             \src, \src, \s_strd, lsl #1
-.ifc \type, prep
+
         mov             v0.16b, v4.16b
         mov             v1.16b, v4.16b
-.else
-        movi            v0.4s, #32, lsl 8   // 64 * 128, bias for SDOT
-        movi            v1.4s, #32, lsl 8
-.endif
+
         sub             v18.16b, v18.16b, v5.16b
         sub             v21.16b, v21.16b, v5.16b
 
         tbl             v19.16b, {v16.16b, v17.16b}, v6.16b
         tbl             v20.16b, {v17.16b, v18.16b}, v28.16b
 
-        sdot            v0.4s, v16.16b, v7.4b[0]
-        sdot            v0.4s, v17.16b, v7.4b[1]
+        \dot            v0.4s, v16.16b, v7.4b[0]
+        \dot            v0.4s, v17.16b, v7.4b[1]
 
         tbl             v16.16b, {v19.16b, v20.16b}, v6.16b
         tbl             v17.16b, {v20.16b, v21.16b}, v28.16b
 
-        sdot            v1.4s, v19.16b, v7.4b[0]
-        sdot            v1.4s, v20.16b, v7.4b[1]
+        \dot            v1.4s, v19.16b, v7.4b[0]
+        \dot            v1.4s, v20.16b, v7.4b[1]
 .ifc \type, prep
         subs            \h, \h, #2
         shrn            v0.4h, v0.4s, #2
@@ -504,29 +477,26 @@ L(\type\()_8tap_v_\isa):
 .ifc \type, put
         .align JUMP_ALIGN
 42:
+.endif
         ldr             s18, [\src]
-        movi            v0.4s, #32, lsl 8   // 64 * 128, bias for SDOT
-        movi            v1.4s, #32, lsl 8
-.else
-        ldr             s18, [\src]
+
         mov             v0.16b, v4.16b
         mov             v1.16b, v4.16b
-.endif
+
         sub             v18.16b, v18.16b, v5.16b
 
         tbl             v19.16b, {v16.16b, v17.16b}, v6.16b
         tbl             v20.16b, {v17.16b, v18.16b}, v28.16b
 
-        sdot            v0.4s, v16.16b, v7.4b[0]
-        sdot            v0.4s, v17.16b, v7.4b[1]
+        \dot            v0.4s, v16.16b, v7.4b[0]
+        \dot            v0.4s, v17.16b, v7.4b[1]
 
-        sdot            v1.4s, v19.16b, v7.4b[0]
-        sdot            v1.4s, v20.16b, v7.4b[1]
+        \dot            v1.4s, v19.16b, v7.4b[0]
+        \dot            v1.4s, v20.16b, v7.4b[1]
 .ifc \type, prep
         shrn            v0.4h, v0.4s, #2
         shrn2           v0.8h, v1.4s, #2
         str             q0, [\dst]
-        ret
 .else
         uzp1            v0.8h, v0.8h, v1.8h
         sqrshrun        v0.8b, v0.8h, #6
@@ -534,8 +504,10 @@ L(\type\()_8tap_v_\isa):
         lsr             x9, x8, #32
         str             w8, [\dst]
         str             w9, [\dst, \d_strd]
+.endif
         ret
 
+.ifc \type, put
         .align JUMP_ALIGN
 20:     // V - 2xN
         ldr             h16, [\src]
@@ -572,8 +544,8 @@ L(\type\()_8tap_v_\isa):
         ldr             h21, [\src, \s_strd]
         add             \src, \src, \s_strd, lsl #1
 
-        movi            v0.4s, #32, lsl 8   // 64 * 128, bias for SDOT
-        movi            v1.4s, #32, lsl 8
+        mov             v0.16b, v4.16b
+        mov             v1.16b, v4.16b
 
         sub             v18.8b, v18.8b, v5.8b
         sub             v21.8b, v21.8b, v5.8b
@@ -581,14 +553,14 @@ L(\type\()_8tap_v_\isa):
         tbl             v19.16b, {v16.16b, v17.16b}, v6.16b
         tbl             v20.16b, {v17.16b, v18.16b}, v28.16b
 
-        sdot            v0.4s, v16.16b, v7.4b[0]
-        sdot            v0.4s, v17.16b, v7.4b[1]
+        \dot            v0.4s, v16.16b, v7.4b[0]
+        \dot            v0.4s, v17.16b, v7.4b[1]
 
         tbl             v16.16b, {v19.16b, v20.16b}, v6.16b
         tbl             v17.16b, {v20.16b, v21.16b}, v28.16b
 
-        sdot            v1.4s, v19.16b, v7.4b[0]
-        sdot            v1.4s, v20.16b, v7.4b[1]
+        \dot            v1.4s, v19.16b, v7.4b[0]
+        \dot            v1.4s, v20.16b, v7.4b[1]
 
         uzp1            v0.8h, v0.8h, v1.8h
         sqrshrun        v0.8b, v0.8h, #6
@@ -605,19 +577,19 @@ L(\type\()_8tap_v_\isa):
 22:
         ldr             h18, [\src]
 
-        movi            v0.4s, #32, lsl 8   // 64 * 128, bias for SDOT
-        movi            v1.4s, #32, lsl 8
+        mov             v0.16b, v4.16b
+        mov             v1.16b, v4.16b
 
         sub             v18.8b, v18.8b, v5.8b
 
         tbl             v19.16b, {v16.16b, v17.16b}, v6.16b
         tbl             v20.16b, {v17.16b, v18.16b}, v28.16b
 
-        sdot            v0.4s, v16.16b, v7.4b[0]
-        sdot            v0.4s, v17.16b, v7.4b[1]
+        \dot            v0.4s, v16.16b, v7.4b[0]
+        \dot            v0.4s, v17.16b, v7.4b[1]
 
-        sdot            v1.4s, v19.16b, v7.4b[0]
-        sdot            v1.4s, v20.16b, v7.4b[1]
+        \dot            v1.4s, v19.16b, v7.4b[0]
+        \dot            v1.4s, v20.16b, v7.4b[1]
 
         uzp1            v0.8h, v0.8h, v1.8h
         sqrshrun        v0.8b, v0.8h, #6
@@ -635,8 +607,8 @@ L(\type\()_8tap_h_hv_\isa):
         madd            w14, \my, w11, w10      // for HV
         ldr             q28, L(h_tbl_neon_dotprod)
         mov             w13, 0x2002             // FILTER_WEIGHT * 128 + rounding
+        dup             v27.4s, w13             // put H overrides this
         sub             \src, \src, #4          // src - 4
-        dup             v27.4s, w13
         ubfx            w9, \mx, #7, #7
         and             \mx, \mx, #0x7F
         ubfx            w11, w14, #7, #7        // for HV
@@ -650,7 +622,7 @@ L(\type\()_8tap_h_hv_\isa):
         // HV cases
         cmp             \h, #4
         csel            w14, w14, w11, le
-        sub             \src, \src, \s_strd, lsl #1 // src - src_stride * 2 - 4
+        sub             \src, \src, \s_strd, lsl #1 // src - s_strd * 2 - 4
         add             \xmy, x12, x14, lsl #3      // subpel V filter address
         mov             x15, x30
         ldr             d7, [\xmy]
@@ -662,7 +634,7 @@ L(\type\()_8tap_h_hv_\isa):
         b.ne            L(\type\()_6tap_hv_\isa)    // vertical != SHARP1
 
         // HV 8-tap cases
-        sub             \src, \src, \s_strd         // src - src_stride * 3 - 4
+        sub             \src, \src, \s_strd         // src - s_strd * 3 - 4
         cmp             \w, #4
         b.eq            40f
 .ifc \type, put
@@ -677,7 +649,6 @@ L(\type\()_8tap_h_hv_\isa):
 .ifc \type, prep
         add             \wd_strd, \w, \w
 .endif
-
         .align LOOP_ALIGN
 81:
         mov             \lsrc, \src
@@ -724,15 +695,15 @@ L(\type\()_8tap_h_hv_\isa):
         smlal2          v1.4s, v18.8h, v7.h[2]
         mov             v18.16b, v19.16b
 
-        sdot            v5.4s, v2.16b, v26.4b[0]
-        sdot            v6.4s, v3.16b, v26.4b[0]
+        \dot            v5.4s, v2.16b, v26.4b[0]
+        \dot            v6.4s, v3.16b, v26.4b[0]
 
         smlal           v0.4s, v19.4h, v7.h[3]
         smlal2          v1.4s, v19.8h, v7.h[3]
         mov             v19.16b, v20.16b
 
-        sdot            v5.4s, v3.16b, v26.4b[1]
-        sdot            v6.4s, v4.16b, v26.4b[1]
+        \dot            v5.4s, v3.16b, v26.4b[1]
+        \dot            v6.4s, v4.16b, v26.4b[1]
 
         smlal           v0.4s, v20.4h, v7.h[4]
         smlal2          v1.4s, v20.8h, v7.h[4]
@@ -753,18 +724,20 @@ L(\type\()_8tap_h_hv_\isa):
         smlal2          v1.4s, v22.8h, v7.h[7]
         rshrn           v0.4h, v0.4s, #6
         rshrn2          v0.8h, v1.4s, #6
-        subs            w8, w8, #1
-        st1             {v0.8h}, [\ldst], \d_strd
-        b.gt            8b
-        add             \dst, \dst, #16
-.else
+.else   // put
         shrn            v22.4h, v5.4s, #2
         shrn2           v22.8h, v6.4s, #2
         smlal           v0.4s, v22.4h, v7.h[7]
         smlal2          v1.4s, v22.8h, v7.h[7]
         tbl             v0.16b, {v0.16b, v1.16b}, v25.16b
-        subs            w8, w8, #1
         sqrshrun        v0.8b, v0.8h, #2
+.endif
+        subs            w8, w8, #1
+.ifc \type, prep
+        st1             {v0.8h}, [\ldst], \d_strd
+        b.gt            8b
+        add             \dst, \dst, #16
+.else
         st1             {v0.8b}, [\ldst], \d_strd
         b.gt            8b
         add             \dst, \dst, #8
@@ -801,6 +774,7 @@ L(\type\()_8tap_h_hv_\isa):
         smlal           v0.4s, v17.4h, v7.h[1]
         mov             v16.16b, v17.16b
         mov             v17.16b, v18.16b
+
         sub             v4.16b, v4.16b, v24.16b
 
         smlal           v0.4s, v18.4h, v7.h[2]
@@ -814,12 +788,10 @@ L(\type\()_8tap_h_hv_\isa):
         smlal           v0.4s, v20.4h, v7.h[4]
         smlal           v0.4s, v21.4h, v7.h[5]
 
-        sdot            v5.4s, v2.16b, v26.4b[0]
+        \dot            v5.4s, v2.16b, v26.4b[0]
         mov             v20.16b, v21.16b
         mov             v21.16b, v22.16b
-.ifc \type, put
-        subs            \h, \h, #1
-.endif
+
         smlal           v0.4s, v22.4h, v7.h[6]
         shrn            v22.4h, v5.4s, #2
 
@@ -829,7 +801,8 @@ L(\type\()_8tap_h_hv_\isa):
         str             d0, [\dst], #8
         subs            \h, \h, #1
 .else
-        tbl             v0.16b, {v0.16b, v1.16b}, v25.16b
+        subs            \h, \h, #1
+        tbl             v0.8b, {v0.16b}, v25.8b
         sqrshrun        v0.8b, v0.8h, #2
         str             s0, [\dst]
         add             \dst, \dst, \d_strd
@@ -865,6 +838,7 @@ L(\type\()_8tap_h_hv_\isa):
         smlal           v0.4s, v17.4h, v7.h[1]
         mov             v16.16b, v17.16b
         mov             v17.16b, v18.16b
+
         sub             v4.16b, v4.16b, v24.16b
 
         smlal           v0.4s, v18.4h, v7.h[2]
@@ -878,16 +852,17 @@ L(\type\()_8tap_h_hv_\isa):
         smlal           v0.4s, v20.4h, v7.h[4]
         smlal           v0.4s, v21.4h, v7.h[5]
 
-        sdot            v5.4s, v2.16b, v26.4b[0]
+        \dot            v5.4s, v2.16b, v26.4b[0]
         mov             v20.16b, v21.16b
         mov             v21.16b, v22.16b
 
-        subs            \h, \h, #1
         smlal           v0.4s, v22.4h, v7.h[6]
         shrn            v22.4h, v5.4s, #2
 
         smlal           v0.4s, v22.4h, v7.h[7]
-        tbl             v0.16b, {v0.16b, v1.16b}, v25.16b
+
+        subs            \h, \h, #1
+        tbl             v0.8b, {v0.16b}, v25.8b
         sqrshrun        v0.8b, v0.8h, #2
 
         str             h0, [\dst]
@@ -951,14 +926,16 @@ L(\type\()_6tap_hv_\isa):
         tbl             v4.16b, {v23.16b}, v30.16b
         mov             v17.16b, v18.16b
 
-        sdot            v5.4s, v2.16b, v26.4b[0]
-        sdot            v6.4s, v3.16b, v26.4b[0]
+        \dot            v5.4s, v2.16b, v26.4b[0]
+        \dot            v6.4s, v3.16b, v26.4b[0]
+
         smlal           v0.4s, v18.4h, v7.h[3]
         smlal2          v1.4s, v18.8h, v7.h[3]
         mov             v18.16b, v19.16b
 
-        sdot            v5.4s, v3.16b, v26.4b[1]
-        sdot            v6.4s, v4.16b, v26.4b[1]
+        \dot            v5.4s, v3.16b, v26.4b[1]
+        \dot            v6.4s, v4.16b, v26.4b[1]
+
         smlal           v0.4s, v19.4h, v7.h[4]
         smlal2          v1.4s, v19.8h, v7.h[4]
         mov             v19.16b, v20.16b
@@ -967,19 +944,17 @@ L(\type\()_6tap_hv_\isa):
         smlal           v0.4s, v20.4h, v7.h[5]
         smlal2          v1.4s, v20.8h, v7.h[5]
         sshr            v20.8h, v23.8h, #2
-.ifc \type, prep
+
+        subs            w8, w8, #1
         smlal           v0.4s, v20.4h, v7.h[6]
         smlal2          v1.4s, v20.8h, v7.h[6]
+.ifc \type, prep
         rshrn           v0.4h, v0.4s, #6
         rshrn2          v0.8h, v1.4s, #6
         st1             {v0.8h}, [\ldst], \d_strd
-        subs            w8, w8, #1
         b.gt            8b
         add             \dst, \dst, #16
 .else
-        subs            w8, w8, #1
-        smlal           v0.4s, v20.4h, v7.h[6]
-        smlal2          v1.4s, v20.8h, v7.h[6]
         tbl             v0.16b, {v0.16b, v1.16b}, v25.16b
         sqrshrun        v0.8b, v0.8h, #2
         st1             {v0.8b}, [\ldst], \d_strd
@@ -993,29 +968,28 @@ L(\type\()_6tap_hv_\isa):
 
         .align FUNC_ALIGN
 L(\type\()_hv_filter8_\isa):
-        ldr             q4, [\lsrc]
-        add             \lsrc, \lsrc, \s_strd
+        ld1             {v4.16b}, [\lsrc], \s_strd
         sub             v4.16b, v4.16b, v24.16b
         mov             v22.16b, v27.16b
         mov             v23.16b, v27.16b
         tbl             v2.16b, {v4.16b}, v28.16b
         tbl             v3.16b, {v4.16b}, v29.16b
         tbl             v4.16b, {v4.16b}, v30.16b
-        sdot            v22.4s, v2.16b, v26.4b[0]
-        sdot            v22.4s, v3.16b, v26.4b[1]
-        sdot            v23.4s, v3.16b, v26.4b[0]
-        sdot            v23.4s, v4.16b, v26.4b[1]
+        \dot            v22.4s, v2.16b, v26.4b[0]
+        \dot            v22.4s, v3.16b, v26.4b[1]
+        \dot            v23.4s, v3.16b, v26.4b[0]
+        \dot            v23.4s, v4.16b, v26.4b[1]
         shrn            v22.4h, v22.4s, #2
         shrn2           v22.8h, v23.4s, #2
         ret
 
         .align FUNC_ALIGN
 L(\type\()_hv_filter4_\isa):
-        mov             v22.16b, v27.16b
         ld1             {v4.8b}, [\src], \s_strd
+        mov             v22.16b, v27.16b
         sub             v4.16b, v4.16b, v24.16b
         tbl             v2.16b, {v4.16b}, v28.16b
-        sdot            v22.4s, v2.16b, v26.4b[0]
+        \dot            v22.4s, v2.16b, v26.4b[0]
         shrn            v22.4h, v22.4s, #2
         ret
 
@@ -1052,19 +1026,17 @@ L(\type\()_hv_filter4_\isa):
 
         mov             v18.16b, v19.16b
         mov             v19.16b, v20.16b
-        sdot            v5.4s, v2.16b, v26.4b[0]
+        \dot            v5.4s, v2.16b, v26.4b[0]
 
         smlal           v0.4s, v20.4h, v7.h[5]
         shrn            v20.4h, v5.4s, #2
-.ifc \type, prep
+        subs            \h, \h, #1
         smlal           v0.4s, v20.4h, v7.h[6]
+.ifc \type, prep
         rshrn           v0.4h, v0.4s, #6
         str             d0, [\dst], #8
-        subs            \h, \h, #1
 .else
-        subs            \h, \h, #1
-        smlal           v0.4s, v20.4h, v7.h[6]
-        tbl             v0.16b, {v0.16b}, v25.16b
+        tbl             v0.8b, {v0.16b}, v25.8b
         sqrshrun        v0.8b, v0.8h, #2
         str             s0, [\dst]
         add             \dst, \dst, \d_strd
@@ -1106,7 +1078,7 @@ L(\type\()_hv_filter4_\isa):
 
         mov             v18.16b, v19.16b
         mov             v19.16b, v20.16b
-        sdot            v5.4s, v2.16b, v26.4b[0]
+        \dot            v5.4s, v2.16b, v26.4b[0]
 
         smlal           v0.4s, v20.4h, v7.h[5]
         shrn            v20.4h, v5.4s, #2
@@ -1114,7 +1086,7 @@ L(\type\()_hv_filter4_\isa):
         subs            \h, \h, #1
         smlal           v0.4s, v20.4h, v7.h[6]
 
-        tbl             v0.16b, {v0.16b}, v25.16b
+        tbl             v0.8b, {v0.16b}, v25.8b
         sqrshrun        v0.8b, v0.8h, #2
 
         str             h0, [\dst]
@@ -1139,7 +1111,7 @@ L(\type\()_8tap_h_\isa):
 20:     // H - 2xN
         AARCH64_VALID_JUMP_TARGET
         add             \src, \src, #2
-        ldr             s6, [\xmx, #2]
+        ldr             s26, [\xmx, #2]
 
         .align LOOP_ALIGN
 2:
@@ -1156,8 +1128,8 @@ L(\type\()_8tap_h_\isa):
         tbl             v2.16b, {v0.16b}, v28.16b
         tbl             v3.16b, {v1.16b}, v28.16b
 
-        sdot            v4.4s, v2.16b, v6.4b[0]
-        sdot            v5.4s, v3.16b, v6.4b[0]
+        \dot            v4.4s, v2.16b, v26.4b[0]
+        \dot            v5.4s, v3.16b, v26.4b[0]
 
         uzp1            v4.8h, v4.8h, v5.8h
         sqshrun         v4.8b, v4.8h, #6
@@ -1170,7 +1142,6 @@ L(\type\()_8tap_h_\isa):
         add             \dst, \dst, \d_strd, lsl #1
         b.gt            2b
         ret
-
 .endif
 
         .align JUMP_ALIGN
@@ -1194,14 +1165,14 @@ L(\type\()_8tap_h_\isa):
         tbl             v2.16b, {v0.16b}, v28.16b
         tbl             v3.16b, {v1.16b}, v28.16b
 
-        sdot            v4.4s, v2.16b, v26.4b[0]
-        sdot            v5.4s, v3.16b, v26.4b[0]
+        \dot            v4.4s, v2.16b, v26.4b[0]
+        \dot            v5.4s, v3.16b, v26.4b[0]
 .ifc \type, prep
         subs            \h, \h, #2
         shrn            v4.4h, v4.4s, #2
         shrn2           v4.8h, v5.4s, #2
         str             q4, [\dst], #16
-.else
+.else   // put
         uzp1            v4.8h, v4.8h, v5.8h
         sqshrun         v4.8b, v4.8h, #6
         subs            \h, \h, #2
@@ -1242,14 +1213,14 @@ L(\type\()_8tap_h_\isa):
         tbl             v18.16b, {v16.16b}, v29.16b
         tbl             v19.16b, {v16.16b}, v30.16b
 
-        sdot            v4.4s, v1.16b, v26.4b[0]
-        sdot            v5.4s, v2.16b, v26.4b[0]
-        sdot            v20.4s, v17.16b, v26.4b[0]
-        sdot            v21.4s, v18.16b, v26.4b[0]
-        sdot            v4.4s, v2.16b, v26.4b[1]
-        sdot            v5.4s, v3.16b, v26.4b[1]
-        sdot            v20.4s, v18.16b, v26.4b[1]
-        sdot            v21.4s, v19.16b, v26.4b[1]
+        \dot            v4.4s, v1.16b, v26.4b[0]
+        \dot            v5.4s, v2.16b, v26.4b[0]
+        \dot            v20.4s, v17.16b, v26.4b[0]
+        \dot            v21.4s, v18.16b, v26.4b[0]
+        \dot            v4.4s, v2.16b, v26.4b[1]
+        \dot            v5.4s, v3.16b, v26.4b[1]
+        \dot            v20.4s, v18.16b, v26.4b[1]
+        \dot            v21.4s, v19.16b, v26.4b[1]
 
         uzp1            v4.8h, v4.8h, v5.8h
         uzp1            v20.8h, v20.8h, v21.8h
@@ -1258,7 +1229,7 @@ L(\type\()_8tap_h_\isa):
         sshr            v20.8h, v20.8h, #2
         subs            \h, \h, #2
         stp             q4, q20, [\dst], #32
-.else
+.else   // put
         sqshrun         v4.8b, v4.8h, #6
         sqshrun         v20.8b, v20.8h, #6
         subs            \h, \h, #2
@@ -1274,12 +1245,12 @@ L(\type\()_8tap_h_\isa):
         AARCH64_VALID_JUMP_TARGET
         ldr             q29, L(h_tbl_neon_dotprod) + 16
         ldr             q30, L(h_tbl_neon_dotprod) + 32
-        ldr             q31, L(h_tbl_neon_dotprod) + 48
         ldr             d26, [\xmx]
 
         .align LOOP_ALIGN
 16:
-        ldp             q16, q17, [\src]
+        ldr             q16, [\src]
+        ldr             q17, [\src, #12]  // avoid 2 register TBL for small cores
         add             \src, \src, \s_strd
 
         sub             v16.16b, v16.16b, v24.16b
@@ -1293,17 +1264,17 @@ L(\type\()_8tap_h_\isa):
         tbl             v0.16b, {v16.16b}, v28.16b
         tbl             v1.16b, {v16.16b}, v29.16b
         tbl             v2.16b, {v16.16b}, v30.16b
-        tbl             v3.16b, {v16.16b, v17.16b}, v31.16b
-        tbl             v4.16b, {v17.16b}, v28.16b
+        tbl             v3.16b, {v17.16b}, v28.16b
+        tbl             v4.16b, {v17.16b}, v29.16b
 
-        sdot            v6.4s, v0.16b, v26.4b[0]
-        sdot            v7.4s, v1.16b, v26.4b[0]
-        sdot            v22.4s, v2.16b, v26.4b[0]
-        sdot            v23.4s, v3.16b, v26.4b[0]
-        sdot            v6.4s, v1.16b, v26.4b[1]
-        sdot            v7.4s, v2.16b, v26.4b[1]
-        sdot            v22.4s, v3.16b, v26.4b[1]
-        sdot            v23.4s, v4.16b, v26.4b[1]
+        \dot            v6.4s, v0.16b, v26.4b[0]
+        \dot            v7.4s, v1.16b, v26.4b[0]
+        \dot            v22.4s, v2.16b, v26.4b[0]
+        \dot            v23.4s, v3.16b, v26.4b[0]
+        \dot            v6.4s, v1.16b, v26.4b[1]
+        \dot            v7.4s, v2.16b, v26.4b[1]
+        \dot            v22.4s, v3.16b, v26.4b[1]
+        \dot            v23.4s, v4.16b, v26.4b[1]
 
         uzp1            v6.8h, v6.8h, v7.8h
         uzp1            v22.8h, v22.8h, v23.8h
@@ -1312,12 +1283,11 @@ L(\type\()_8tap_h_\isa):
         sshr            v22.8h, v22.8h, #2
         subs            \h, \h, #1
         stp             q6, q22, [\dst], #32
-.else
+.else   // put
         sqshrun         v6.8b, v6.8h, #6
         sqshrun2        v6.16b, v22.8h, #6
         subs            \h, \h, #1
-        str             q6, [\dst]
-        add             \dst, \dst, \d_strd
+        st1             {v6.16b}, [\dst], \d_strd
 .endif
         b.gt            16b
         ret
@@ -1329,7 +1299,6 @@ L(\type\()_8tap_h_\isa):
         AARCH64_VALID_JUMP_TARGET
         ldr             q29, L(h_tbl_neon_dotprod) + 16
         ldr             q30, L(h_tbl_neon_dotprod) + 32
-        ldr             q31, L(h_tbl_neon_dotprod) + 48
         ldr             d26, [\xmx]
 .ifc \type, put
         sub             \d_strd, \d_strd, \w, uxtw
@@ -1339,7 +1308,9 @@ L(\type\()_8tap_h_\isa):
 
         .align LOOP_ALIGN
 32:
-        ldp             q16, q17, [\src], #16
+        ldr             q16, [\src]
+        ldr             q17, [\src, #12]  // avoid 2 register TBL for small cores
+        add             \src, \src, #16
 
         sub             v16.16b, v16.16b, v24.16b
         sub             v17.16b, v17.16b, v24.16b
@@ -1352,17 +1323,17 @@ L(\type\()_8tap_h_\isa):
         tbl             v0.16b, {v16.16b}, v28.16b
         tbl             v1.16b, {v16.16b}, v29.16b
         tbl             v2.16b, {v16.16b}, v30.16b
-        tbl             v3.16b, {v16.16b, v17.16b}, v31.16b
-        tbl             v4.16b, {v17.16b}, v28.16b
+        tbl             v3.16b, {v17.16b}, v28.16b
+        tbl             v4.16b, {v17.16b}, v29.16b
 
-        sdot            v6.4s, v0.16b, v26.4b[0]
-        sdot            v7.4s, v1.16b, v26.4b[0]
-        sdot            v22.4s, v2.16b, v26.4b[0]
-        sdot            v23.4s, v3.16b, v26.4b[0]
-        sdot            v6.4s, v1.16b, v26.4b[1]
-        sdot            v7.4s, v2.16b, v26.4b[1]
-        sdot            v22.4s, v3.16b, v26.4b[1]
-        sdot            v23.4s, v4.16b, v26.4b[1]
+        \dot            v6.4s, v0.16b, v26.4b[0]
+        \dot            v7.4s, v1.16b, v26.4b[0]
+        \dot            v22.4s, v2.16b, v26.4b[0]
+        \dot            v23.4s, v3.16b, v26.4b[0]
+        \dot            v6.4s, v1.16b, v26.4b[1]
+        \dot            v7.4s, v2.16b, v26.4b[1]
+        \dot            v22.4s, v3.16b, v26.4b[1]
+        \dot            v23.4s, v4.16b, v26.4b[1]
 
         uzp1            v6.8h, v6.8h, v7.8h
         uzp1            v22.8h, v22.8h, v23.8h
@@ -1371,7 +1342,7 @@ L(\type\()_8tap_h_\isa):
         sshr            v22.8h, v22.8h, #2
         subs            w8, w8, #16
         stp             q6, q22, [\dst], #32
-.else
+.else   // put
         sqshrun         v6.8b, v6.8h, #6
         sqshrun2        v6.16b, v22.8h, #6
         subs            w8, w8, #16
@@ -1404,11 +1375,11 @@ endfunc
 
 // dst(x0), d_strd(x7), src(x1), s_strd(x2), w(w3), h(w4), mx(w5), my(w6)
 // xmx(x5), xmy(x6), ldst(x5), lsrc(x6), wd_strd(w7)
-filter_8tap_fn prep, neon_dotprod, x0, x7, x1, x2, w3, w4, w5, w6, x5, x6, x5, x6, w7
+filter_8tap_fn prep, sdot, neon_dotprod, x0, x7, x1, x2, w3, w4, w5, w6, x5, x6, x5, x6, w7
 
 // dst(x0) d_strd(x1) src(x2) s_strd(x3) w(w4) h(w5) mx(w6) my(w7)
 // xmx(x6), xmy(x7), ldst(x6), lsrc(x7), wd_strd(w1)
-filter_8tap_fn  put, neon_dotprod, x0, x1, x2, x3, w4, w5, w6, w7, x6, x7, x6, x7, w1
+filter_8tap_fn  put, sdot, neon_dotprod, x0, x1, x2, x3, w4, w5, w6, w7, x6, x7, x6, x7, w1
 
 DISABLE_DOTPROD
 #endif  // HAVE_DOTPROD
