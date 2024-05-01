@@ -704,20 +704,27 @@ L(\type\()_8tap_h_hv_\isa):
         smull           v0.4s, v16.4h, v7.h[0]
         smull2          v1.4s, v16.8h, v7.h[0]
         mov             v16.16b, v17.16b
-.ifc \isa, neon_dotprod
+.ifc \isa, neon_i8mm
+        movi            v5.4s, #0
+        movi            v6.4s, #0
+        tbl             v2.16b, {v23.16b}, v28.16b
+        tbl             v3.16b, {v23.16b}, v29.16b
+.else   // neon_dotprod
         sub             v23.16b, v23.16b, v24.16b
-.endif
         mov             v5.16b, v27.16b
         mov             v6.16b, v27.16b
-
+.endif
         smlal           v0.4s, v17.4h, v7.h[1]
         smlal2          v1.4s, v17.8h, v7.h[1]
+.ifc \isa, neon_i8mm
+        tbl             v4.16b, {v23.16b}, v30.16b
         mov             v17.16b, v18.16b
-
+.else   // neon_dotprod
+        mov             v17.16b, v18.16b
         tbl             v2.16b, {v23.16b}, v28.16b
         tbl             v3.16b, {v23.16b}, v29.16b
         tbl             v4.16b, {v23.16b}, v30.16b
-
+.endif
         smlal           v0.4s, v18.4h, v7.h[2]
         smlal2          v1.4s, v18.8h, v7.h[2]
         mov             v18.16b, v19.16b
@@ -742,24 +749,37 @@ L(\type\()_8tap_h_hv_\isa):
         uzp1            v23.8h, v5.8h, v6.8h
 .endif
         mov             v21.16b, v22.16b
-
         smlal           v0.4s, v22.4h, v7.h[6]
         smlal2          v1.4s, v22.8h, v7.h[6]
+.ifc \isa, neon_i8mm
+        subs            w8, w8, #1
+.endif
 .ifc \type, prep
+    .ifc \isa, neon_i8mm
+        srshr           v22.8h, v23.8h, #2
+    .else
         sshr            v22.8h, v23.8h, #2
+    .endif
         smlal           v0.4s, v22.4h, v7.h[7]
         smlal2          v1.4s, v22.8h, v7.h[7]
         rshrn           v0.4h, v0.4s, #6
         rshrn2          v0.8h, v1.4s, #6
 .else   // put
+    .ifc \isa, neon_i8mm
+        rshrn           v22.4h, v5.4s, #2
+        rshrn2          v22.8h, v6.4s, #2
+    .else
         shrn            v22.4h, v5.4s, #2
         shrn2           v22.8h, v6.4s, #2
+    .endif
         smlal           v0.4s, v22.4h, v7.h[7]
         smlal2          v1.4s, v22.8h, v7.h[7]
         tbl             v0.16b, {v0.16b, v1.16b}, v25.16b
         sqrshrun        v0.8b, v0.8h, #2
 .endif
+.ifc \isa, neon_dotprod
         subs            w8, w8, #1
+.endif
 .ifc \type, prep
         st1             {v0.8h}, [\ldst], \d_strd
         b.gt            8b
@@ -807,8 +827,11 @@ L(\type\()_8tap_h_hv_\isa):
         smlal           v0.4s, v18.4h, v7.h[2]
         smlal           v0.4s, v19.4h, v7.h[3]
         tbl             v2.16b, {v4.16b}, v28.16b
+.ifc \isa, neon_i8mm
+        movi            v5.4s, #0
+.else
         mov             v5.16b, v27.16b
-
+.endif
         mov             v18.16b, v19.16b
         mov             v19.16b, v20.16b
 
@@ -818,10 +841,12 @@ L(\type\()_8tap_h_hv_\isa):
         \dot            v5.4s, v2.16b, v26.4b[0]
         mov             v20.16b, v21.16b
         mov             v21.16b, v22.16b
-
         smlal           v0.4s, v22.4h, v7.h[6]
+.ifc \isa, neon_i8mm
+        rshrn           v22.4h, v5.4s, #2
+.else
         shrn            v22.4h, v5.4s, #2
-
+.endif
         smlal           v0.4s, v22.4h, v7.h[7]
 .ifc \type, prep
         rshrn           v0.4h, v0.4s, #6
@@ -865,14 +890,17 @@ L(\type\()_8tap_h_hv_\isa):
         smlal           v0.4s, v17.4h, v7.h[1]
         mov             v16.16b, v17.16b
         mov             v17.16b, v18.16b
-.ifc \isa, neon_dotprod
+    .ifc \isa, neon_dotprod
         sub             v4.16b, v4.16b, v24.16b
-.endif
+    .endif
         smlal           v0.4s, v18.4h, v7.h[2]
         smlal           v0.4s, v19.4h, v7.h[3]
         tbl             v2.16b, {v4.16b}, v28.16b
+    .ifc \isa, neon_i8mm
+        movi            v5.4s, #0
+    .else
         mov             v5.16b, v27.16b
-
+    .endif
         mov             v18.16b, v19.16b
         mov             v19.16b, v20.16b
 
@@ -884,11 +912,14 @@ L(\type\()_8tap_h_hv_\isa):
         mov             v21.16b, v22.16b
 
         smlal           v0.4s, v22.4h, v7.h[6]
+    .ifc \isa, neon_i8mm
+        rshrn           v22.4h, v5.4s, #2
+    .else
         shrn            v22.4h, v5.4s, #2
-
+    .endif
         smlal           v0.4s, v22.4h, v7.h[7]
-
         subs            \h, \h, #1
+
         tbl             v0.8b, {v0.16b}, v25.8b
         sqrshrun        v0.8b, v0.8h, #2
 
@@ -939,14 +970,16 @@ L(\type\()_6tap_hv_\isa):
 
         smull           v0.4s, v16.4h, v7.h[1]
         smull2          v1.4s, v16.8h, v7.h[1]
-.ifc \isa, neon_dotprod
-        sub             v23.16b, v23.16b, v24.16b
-.endif
+.ifc \isa, neon_i8mm
         mov             v16.16b, v17.16b
-
+        movi            v5.4s, #0
+        movi            v6.4s, #0
+.else
+        sub             v23.16b, v23.16b, v24.16b
+        mov             v16.16b, v17.16b
         mov             v5.16b, v27.16b
         mov             v6.16b, v27.16b
-
+.endif
         tbl             v2.16b, {v23.16b}, v28.16b
         tbl             v3.16b, {v23.16b}, v29.16b
 
@@ -972,8 +1005,11 @@ L(\type\()_6tap_hv_\isa):
 
         smlal           v0.4s, v20.4h, v7.h[5]
         smlal2          v1.4s, v20.8h, v7.h[5]
+.ifc \isa, neon_i8mm
+        srshr           v20.8h, v23.8h, #2
+.else
         sshr            v20.8h, v23.8h, #2
-
+.endif
         subs            w8, w8, #1
         smlal           v0.4s, v20.4h, v7.h[6]
         smlal2          v1.4s, v20.8h, v7.h[6]
@@ -998,27 +1034,42 @@ L(\type\()_6tap_hv_\isa):
         .align FUNC_ALIGN
 L(\type\()_hv_filter8_\isa):
         ld1             {v4.16b}, [\lsrc], \s_strd
-.ifc \isa, neon_dotprod
+.ifc \isa, neon_i8mm
+        movi            v22.4s, #0
+        movi            v23.4s, #0
+.else   // neon_dotprod
         sub             v4.16b, v4.16b, v24.16b
-.endif
         mov             v22.16b, v27.16b
         mov             v23.16b, v27.16b
+.endif
         tbl             v2.16b, {v4.16b}, v28.16b
         tbl             v3.16b, {v4.16b}, v29.16b
         tbl             v4.16b, {v4.16b}, v30.16b
         \dot            v22.4s, v2.16b, v26.4b[0]
+.ifc \isa, neon_i8mm
+        \dot            v23.4s, v3.16b, v26.4b[0]
+        \dot            v22.4s, v3.16b, v26.4b[1]
+.else
         \dot            v22.4s, v3.16b, v26.4b[1]
         \dot            v23.4s, v3.16b, v26.4b[0]
+.endif
         \dot            v23.4s, v4.16b, v26.4b[1]
+.ifc \isa, neon_i8mm
+        uzp1            v22.8h, v22.8h, v23.8h
+        srshr           v22.8h, v22.8h, #2
+.else
         shrn            v22.4h, v22.4s, #2
         shrn2           v22.8h, v23.4s, #2
+.endif
         ret
 
         .align FUNC_ALIGN
 L(\type\()_hv_filter4_\isa):
         ld1             {v4.8b}, [\src], \s_strd
+.ifc \isa, neon_i8mm
+        movi            v22.4s, #2
+.else
         mov             v22.16b, v27.16b
-.ifc \isa, neon_dotprod
         sub             v4.16b, v4.16b, v24.16b
 .endif
         tbl             v2.16b, {v4.16b}, v28.16b
@@ -1057,14 +1108,21 @@ L(\type\()_hv_filter4_\isa):
         smlal           v0.4s, v18.4h, v7.h[3]
         smlal           v0.4s, v19.4h, v7.h[4]
         tbl             v2.16b, {v4.16b}, v28.16b
+.ifc \isa, neon_i8mm
+        movi            v5.4s, #0
+.else
         mov             v5.16b, v27.16b
-
+.endif
         mov             v18.16b, v19.16b
         mov             v19.16b, v20.16b
         \dot            v5.4s, v2.16b, v26.4b[0]
 
         smlal           v0.4s, v20.4h, v7.h[5]
+.ifc \isa, neon_i8mm
+        rshrn           v20.4h, v5.4s, #2
+.else
         shrn            v20.4h, v5.4s, #2
+.endif
         subs            \h, \h, #1
         smlal           v0.4s, v20.4h, v7.h[6]
 .ifc \type, prep
@@ -1102,23 +1160,31 @@ L(\type\()_hv_filter4_\isa):
 
         smull           v0.4s, v16.4h, v7.h[1]
         smlal           v0.4s, v17.4h, v7.h[2]
-.ifc \isa, neon_dotprod
+    .ifc \isa, neon_dotprod
         sub             v4.16b, v4.16b, v24.16b
-.endif
+    .endif
         mov             v16.16b, v17.16b
         mov             v17.16b, v18.16b
 
         smlal           v0.4s, v18.4h, v7.h[3]
         smlal           v0.4s, v19.4h, v7.h[4]
         tbl             v2.16b, {v4.16b}, v28.16b
+    .ifc \isa, neon_i8mm
+        movi            v5.4s, #0
+    .else
         mov             v5.16b, v27.16b
+    .endif
 
         mov             v18.16b, v19.16b
         mov             v19.16b, v20.16b
         \dot            v5.4s, v2.16b, v26.4b[0]
 
         smlal           v0.4s, v20.4h, v7.h[5]
+    .ifc \isa, neon_i8mm
+        rshrn           v20.4h, v5.4s, #2
+    .else
         shrn            v20.4h, v5.4s, #2
+    .endif
 
         subs            \h, \h, #1
         smlal           v0.4s, v20.4h, v7.h[6]
