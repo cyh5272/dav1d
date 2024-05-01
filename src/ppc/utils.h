@@ -1,6 +1,6 @@
 /*
- * Copyright © 2019, VideoLAN and dav1d authors
- * Copyright © 2019, Janne Grunau
+ * Copyright © 2024, VideoLAN and dav1d authors
+ * Copyright © 2024, Luca Barbato
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,14 +25,29 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef DAV1D_SRC_PPC_CPU_H
-#define DAV1D_SRC_PPC_CPU_H
+#ifndef DAV1D_SRC_PPC_UTILS_H
+#define DAV1D_SRC_PPC_UTILS_H
 
-enum CpuFlags {
-    DAV1D_PPC_CPU_FLAG_VSX = 1 << 0,
-    DAV1D_PPC_CPU_FLAG_PWR9 = 1 << 1,
-};
+#include "src/ppc/dav1d_types.h"
 
-unsigned dav1d_get_cpu_flags_ppc(void);
+#define assert_eq(a, b) \
+    if ((a) != (b)) \
+        printf("%d: %d vs %d\n", __LINE__, a, b); \
+    assert((a) == (b));
 
-#endif /* DAV1D_SRC_PPC_CPU_H */
+// Transpose a 4x4 matrix of i32x4 vectors
+#define TRANSPOSE4_I32(c0, c1, c2, c3) \
+{ \
+    i32x4 v02h = vec_mergeh(c0, c2); \
+    i32x4 v02l = vec_mergel(c0, c2); \
+    i32x4 v13h = vec_mergeh(c1, c3); \
+    i32x4 v13l = vec_mergel(c1, c3); \
+\
+    c0 = vec_mergeh(v02h, v13h); \
+    c1 = vec_mergel(v02h, v13h); \
+    c2 = vec_mergeh(v02l, v13l); \
+    c3 = vec_mergel(v02l, v13l); \
+}
+
+
+#endif // DAV1D_SRC_PPC_UTILS_H
