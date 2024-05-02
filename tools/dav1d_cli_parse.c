@@ -104,7 +104,7 @@ static const struct option long_opts[] = {
 #elif ARCH_LOONGARCH
 #define ALLOWED_CPU_MASKS ", 'lsx' or 'lasx'"
 #elif ARCH_PPC64LE
-#define ALLOWED_CPU_MASKS " or 'vsx'"
+#define ALLOWED_CPU_MASKS ", 'vsx' or 'pwr9'"
 #elif ARCH_RISCV
 #define ALLOWED_CPU_MASKS " or 'rvv'"
 #elif ARCH_X86
@@ -229,6 +229,14 @@ enum CpuMask {
 };
 #endif
 
+#if ARCH_PPC64LE
+enum CpuMask {
+    PPC_CPU_MASK_VSX       = DAV1D_PPC_CPU_FLAG_VSX,
+    PPC_CPU_MASK_PWR9      = DAV1D_PPC_CPU_FLAG_VSX | DAV1D_PPC_CPU_FLAG_PWR9,
+};
+#endif
+
+
 static const EnumParseTable cpu_mask_tbl[] = {
 #if ARCH_AARCH64 || ARCH_ARM
     { "neon",    ARM_CPU_MASK_NEON },
@@ -242,7 +250,8 @@ static const EnumParseTable cpu_mask_tbl[] = {
     { "lsx", DAV1D_LOONGARCH_CPU_FLAG_LSX },
     { "lasx", DAV1D_LOONGARCH_CPU_FLAG_LASX },
 #elif ARCH_PPC64LE
-    { "vsx", DAV1D_PPC_CPU_FLAG_VSX },
+    { "vsx",  PPC_CPU_MASK_VSX },
+    { "pwr9", PPC_CPU_MASK_PWR9 },
 #elif ARCH_RISCV
     { "rvv", DAV1D_RISCV_CPU_FLAG_V },
 #elif ARCH_X86
