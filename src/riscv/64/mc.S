@@ -27,30 +27,43 @@
 
 #include "src/riscv/asm.S"
 
-function avg_8bpc_rvv, export=1, ext=v
+.macro avg dst, t1, t2
+    vadd.vv \dst, \t1, \t2
+.endm
+
+.macro w_avg dst, t1, t2
+    vwmul.vx v16, \t1, a6
+    vwmacc.vx v16, a7, \t2
+    vnclip.wi \dst, v16, 8
+.endm
+
+.macro bidir_fn type, shift
+function \type\()_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
-    li t0, 128
-    bgeu a4, t0, 128f
-    li t0, 16
-    bgeu a4, t0, 16f
+.ifc \type, w_avg
+    li a7, 16
+    subw a7, a7, a6
+.endif
     li t0, 8
-    bgeu a4, t0, 8f
+    bgtu a4, t0, 128f
 4:
+    li t0, 4
+    bgtu a4, t0, 8f
     vsetvli zero, a5, e16, m2, ta, ma
     vlseg4e16.v v0, (a2)
     vlseg4e16.v v8, (a3)
-    vadd.vv v0, v0, v8
-    vadd.vv v2, v2, v10
-    vadd.vv v4, v4, v12
-    vadd.vv v6, v6, v14
+    \type v0, v0, v8
+    \type v2, v2, v10
+    \type v4, v4, v12
+    \type v6, v6, v14
 .irpc i, 0246
     vmax.vx v\i, v\i, zero
 .endr
     vsetvli zero, zero, e8, m1, ta, ma
-    vnclipu.wi v8, v0, 4+1
-    vnclipu.wi v9, v2, 4+1
-    vnclipu.wi v10, v4, 4+1
-    vnclipu.wi v11, v6, 4+1
+    vnclipu.wi v8, v0, \shift
+    vnclipu.wi v9, v2, \shift
+    vnclipu.wi v10, v4, \shift
+    vnclipu.wi v11, v6, \shift
     vssseg4e8.v v8, (a0), a1
     ret
 8:
@@ -61,67 +74,55 @@ function avg_8bpc_rvv, export=1, ext=v
     slliw t1, t0, 4
     add a2, a2, t1
     add a3, a3, t1
-    vadd.vv v0, v0, v8
-    vadd.vv v1, v1, v9
-    vadd.vv v2, v2, v10
-    vadd.vv v3, v3, v11
-    vadd.vv v4, v4, v12
-    vadd.vv v5, v5, v13
-    vadd.vv v6, v6, v14
-    vadd.vv v7, v7, v15
+    \type v0, v0, v8
+    \type v1, v1, v9
+    \type v2, v2, v10
+    \type v3, v3, v11
+    \type v4, v4, v12
+    \type v5, v5, v13
+    \type v6, v6, v14
+    \type v7, v7, v15
 .irpc i, 01234567
     vmax.vx v\i, v\i, zero
 .endr
     vsetvli zero, zero, e8, mf2, ta, ma
-    vnclipu.wi v8,  v0, 4+1
-    vnclipu.wi v9,  v1, 4+1
-    vnclipu.wi v10, v2, 4+1
-    vnclipu.wi v11, v3, 4+1
-    vnclipu.wi v12, v4, 4+1
-    vnclipu.wi v13, v5, 4+1
-    vnclipu.wi v14, v6, 4+1
-    vnclipu.wi v15, v7, 4+1
+    vnclipu.wi v8,  v0, \shift
+    vnclipu.wi v9,  v1, \shift
+    vnclipu.wi v10, v2, \shift
+    vnclipu.wi v11, v3, \shift
+    vnclipu.wi v12, v4, \shift
+    vnclipu.wi v13, v5, \shift
+    vnclipu.wi v14, v6, \shift
+    vnclipu.wi v15, v7, \shift
     vssseg8e8.v v8, (a0), a1
     mul t0, t0, a1
     add a0, a0, t0
     bnez a5, 8b
     ret
-16:
-32:
-64:
-    slliw t0, a4, 1
-640:
-    vsetvli zero, a4, e16, m8, ta, ma
-    vle16.v v0, (a2)
-    vle16.v v8, (a3)
-    add a2, a2, t0
-    add a3, a3, t0
-    vadd.vv v0, v0, v8
-    vmax.vx v0, v0, zero
-    vsetvli zero, zero, e8, m4, ta, ma
-    vnclipu.wi v8, v0, 4+1
-    vse8.v v8, (a0)
-    add a0, a0, a1
-    addi a5, a5, -1
-    bnez a5, 640b
-    ret
-
 128:
     sub a1, a1, a4
     mv t1, a4
 1280:
+.ifc \type, avg
     vsetvli t0, a4, e16, m8, ta, ma
+.else
+    vsetvli t0, a4, e16, m4, ta, ma
+.endif
     vle16.v v0, (a2)
     vle16.v v8, (a3)
     subw a4, a4, t0
     slliw t3, t0, 1
     add a2, a2, t3
     add a3, a3, t3
-    vadd.vv v16, v0, v8
-    vmax.vx v16, v16, zero
+    \type v0, v0, v8
+    vmax.vx v0, v0, zero
+.ifc \type, avg
     vsetvli zero, zero, e8, m4, ta, ma
-    vnclipu.wi v0, v16, 4+1
-    vse8.v v0, (a0)
+.else
+    vsetvli zero, zero, e8, m2, ta, ma
+.endif
+    vnclipu.wi v8, v0, \shift
+    vse8.v v8, (a0)
     add a0, a0, t0
     bnez a4, 1280b
     add a0, a0, a1
@@ -130,37 +131,10 @@ function avg_8bpc_rvv, export=1, ext=v
     bnez a5, 1280b
     ret
 endfunc
+.endm
 
-function w_avg_8bpc_rvv, export=1, ext=v
-    csrw vxrm, zero
-    li t4, 16
-    subw t4, t4, a6
-    sub a1, a1, a4
-1:
-    mv t1, a4
-2:
-    vsetvli t0, t1, e16, m4, ta, ma
-    vle16.v v0, (a2)
-    vle16.v v4, (a3)
-    subw t1, t1, t0
-    slliw t3, t0, 1
-    add a2, a2, t3
-    add a3, a3, t3
-    vwmul.vx v8, v0, a6
-    vwmacc.vx v8, t4, v4
-    vnclip.wi v0, v8, 4+4
-    vmax.vx v0, v0, zero
-    vsetvli zero, zero, e8, m2, ta, ma
-    vnclipu.wi v4, v0, 0
-    vse8.v v4, (a0)
-    add a0, a0, t0
-    bnez t1, 2b
-
-    add a0, a0, a1
-    addiw a5, a5, -1
-    bnez a5, 1b
-    ret
-endfunc
+bidir_fn avg, 5
+bidir_fn w_avg, 0
 
 function mask_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
