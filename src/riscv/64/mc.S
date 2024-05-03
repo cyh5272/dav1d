@@ -27,14 +27,23 @@
 
 #include "src/riscv/asm.S"
 
-.macro avg dst, t1, t2
+.macro avg dst, t1, t2, w
     vadd.vv \dst, \t1, \t2
 .endm
 
-.macro w_avg dst, t1, t2
-    vwmul.vx v16, \t1, a6
-    vwmacc.vx v16, a7, \t2
-    vnclip.wi \dst, v16, 8
+.macro w_avg dst, t1, t2, w
+    vwmul.vx v24, \t1, a6
+    vwmacc.vx v24, a7, \t2
+    vnclip.wi \dst, v24, 8
+.endm
+
+.macro mask dst, t1, t2, w
+    vzext.vf2 v28, \w
+    vwmul.vv v24, \t1, v28
+    vzext.vf2 \t1, \w
+    vrsub.vx \t1, \t1, a7
+    vwmacc.vv v24, \t1, \t2
+    vnclip.wi \dst, v24, 10
 .endm
 
 .macro bidir_fn type, shift
@@ -44,6 +53,9 @@ function \type\()_8bpc_rvv, export=1, ext=v
     li a7, 16
     subw a7, a7, a6
 .endif
+.ifc \type, mask
+    li a7, 64
+.endif
     li t0, 8
     bgtu a4, t0, 128f
 4:
@@ -52,10 +64,13 @@ function \type\()_8bpc_rvv, export=1, ext=v
     vsetvli zero, a5, e16, m2, ta, ma
     vlseg4e16.v v0, (a2)
     vlseg4e16.v v8, (a3)
-    \type v0, v0, v8
-    \type v2, v2, v10
-    \type v4, v4, v12
-    \type v6, v6, v14
+.ifc \type, mask
+    vlseg4e8.v v16, (a6)
+.endif
+    \type v0, v0, v8, v16
+    \type v2, v2, v10, v17
+    \type v4, v4, v12, v18
+    \type v6, v6, v14, v19
 .irpc i, 0246
     vmax.vx v\i, v\i, zero
 .endr
@@ -70,18 +85,23 @@ function \type\()_8bpc_rvv, export=1, ext=v
     vsetvli t0, a5, e16, m1, ta, ma
     vlseg8e16.v v0, (a2)
     vlseg8e16.v v8, (a3)
+.ifc \type, mask
+    vlseg8e8.v v16, (a6)
+    slliw t1, t0, 3
+    add a6, a6, t1
+.endif
     sub a5, a5, t0
     slliw t1, t0, 4
     add a2, a2, t1
     add a3, a3, t1
-    \type v0, v0, v8
-    \type v1, v1, v9
-    \type v2, v2, v10
-    \type v3, v3, v11
-    \type v4, v4, v12
-    \type v5, v5, v13
-    \type v6, v6, v14
-    \type v7, v7, v15
+    \type v0, v0, v8, v16
+    \type v1, v1, v9, v17
+    \type v2, v2, v10, v18
+    \type v3, v3, v11, v19
+    \type v4, v4, v12, v20
+    \type v5, v5, v13, v21
+    \type v6, v6, v14, v22
+    \type v7, v7, v15, v23
 .irpc i, 01234567
     vmax.vx v\i, v\i, zero
 .endr
@@ -101,7 +121,7 @@ function \type\()_8bpc_rvv, export=1, ext=v
     ret
 128:
     sub a1, a1, a4
-    mv t1, a4
+    mv t4, a4
 1280:
 .ifc \type, avg
     vsetvli t0, a4, e16, m8, ta, ma
@@ -110,11 +130,15 @@ function \type\()_8bpc_rvv, export=1, ext=v
 .endif
     vle16.v v0, (a2)
     vle16.v v8, (a3)
+.ifc \type, mask
+    vle8.v v4, (a6)
+    add a6, a6, t0
+.endif
     subw a4, a4, t0
-    slliw t3, t0, 1
-    add a2, a2, t3
-    add a3, a3, t3
-    \type v0, v0, v8
+    slliw t1, t0, 1
+    add a2, a2, t1
+    add a3, a3, t1
+    \type v0, v0, v8, v4
     vmax.vx v0, v0, zero
 .ifc \type, avg
     vsetvli zero, zero, e8, m4, ta, ma
@@ -126,52 +150,16 @@ function \type\()_8bpc_rvv, export=1, ext=v
     add a0, a0, t0
     bnez a4, 1280b
     add a0, a0, a1
-    mv a4, t1
+    mv a4, t4
     addiw a5, a5, -1
     bnez a5, 1280b
     ret
 endfunc
 .endm
 
-bidir_fn avg, 5
+bidir_fn avg,   5
 bidir_fn w_avg, 0
-
-function mask_8bpc_rvv, export=1, ext=v
-    csrw vxrm, zero
-    vsetvli t0, zero, e16, m4, ta, ma
-    li t0, 64
-    vmv.v.x v12, t0
-    sub a1, a1, a4
-1:
-    mv t1, a4
-2:
-    vsetvli t0, t1, e8, m2, ta, ma
-    vle8.v v0, (a6)
-    subw t1, t1, t0
-    add a6, a6, t0
-    vwcvtu.x.x.v v8, v0
-    vsetvli zero, zero, e16, m4, ta, ma
-    vle16.v v0, (a2)
-    vle16.v v4, (a3)
-    slliw t3, t0, 1
-    add a2, a2, t3
-    add a3, a3, t3
-    vwmul.vv v16, v0, v8
-    vsub.vv v8, v12, v8
-    vwmacc.vv v16, v4, v8
-    vnclip.wi v0, v16, 4+6
-    vmax.vx v0, v0, zero
-    vsetvli zero, zero, e8, m2, ta, ma
-    vnclipu.wi v4, v0, 0
-    vse8.v v4, (a0)
-    add a0, a0, t0
-    bnez t1, 2b
-
-    add a0, a0, a1
-    addiw a5, a5, -1
-    bnez a5, 1b
-    ret
-endfunc
+bidir_fn mask,  0
 
 function blend_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
