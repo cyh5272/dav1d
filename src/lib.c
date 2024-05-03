@@ -30,6 +30,7 @@
 
 #include <errno.h>
 #include <string.h>
+#include <inttypes.h>
 
 #if defined(__linux__) && defined(HAVE_DLSYM)
 #include <dlfcn.h>
@@ -758,4 +759,37 @@ void dav1d_data_unref(Dav1dData *const buf) {
 
 void dav1d_data_props_unref(Dav1dDataProps *const props) {
     dav1d_data_props_unref_internal(props);
+}
+
+void dav1d_dump_vrr(const unsigned vl, const unsigned vtype, const void *vreg);
+void dav1d_dump_vrr(const unsigned vl, const unsigned vtype, const void *vreg)
+{
+    static const char *vsew[8]  = {"e8", "e16", "e32", "e64", "?", "?", "?", "?"};
+    static const char *vlmul[8] = {"m1", "m2", "m4", "m8", "?", "mf8", "mf4", "mf2"};
+    static const char *vta[2]   = {"tu", "ta"};
+    static const char *vma[2]   = {"mu", "ma"};
+    const unsigned sew = (vtype >> 3) & 7;
+    union {
+        const void     *v;
+        const uint8_t  *u8;
+        const uint16_t *u16;
+        const uint32_t *u32;
+        const uint64_t *u64;
+    } v = { .v = vreg };
+
+    for (unsigned i = 0; i < vl; i++) {
+        uint64_t x;
+        switch (sew) {
+        case 0: x = v.u8[i]; break;
+        case 1: x = v.u16[i]; break;
+        case 2: x = v.u32[i]; break;
+        case 3: x = v.u64[i]; break;
+        }
+
+        fprintf(stderr, " %" PRIx64, x);
+    }
+
+    fprintf(stderr, " [vl=%d, %s, %s, %s, %s]\n",
+            vl, vsew[sew], vlmul[vtype & 7],
+            vta[(vtype >> 6) & 1], vma[(vtype >> 7) & 1]);
 }

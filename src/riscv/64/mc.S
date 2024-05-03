@@ -1,0 +1,261 @@
+/******************************************************************************
+ * Copyright © 2018, VideoLAN and dav1d authors
+ * Copyright © 2024, Niklas Haas
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *****************************************************************************/
+
+#include "src/riscv/asm.S"
+
+.macro avg dst, t1, t2, w
+    vadd.vv \dst, \t1, \t2
+.endm
+
+.macro w_avg dst, t1, t2, w
+    vwmul.vx v24, \t1, a6
+    vwmacc.vx v24, a7, \t2
+    vnclip.wi \dst, v24, 8
+.endm
+
+.macro mask dst, t1, t2, w
+    vzext.vf2 v28, \w
+    vwmul.vv v24, \t1, v28
+    vzext.vf2 \t1, \w
+    vrsub.vx \t1, \t1, a7
+    vwmacc.vv v24, \t1, \t2
+    vnclip.wi \dst, v24, 10
+.endm
+
+.macro bidir_fn type, shift
+function \type\()_8bpc_rvv, export=1, ext=v
+    csrw vxrm, zero
+.ifc \type, w_avg
+    li a7, 16
+    sub a7, a7, a6
+.endif
+.ifc \type, mask
+    li a7, 64
+.endif
+    li t0, 8
+    bgtu a4, t0, 128f
+4:
+    li t0, 4
+    bgtu a4, t0, 8f
+    vsetvli zero, a5, e16, m2, ta, ma
+    vlseg4e16.v v0, (a2)
+    vlseg4e16.v v8, (a3)
+.ifc \type, mask
+    vlseg4e8.v v16, (a6)
+.endif
+    \type v0, v0, v8, v16
+    \type v2, v2, v10, v17
+    \type v4, v4, v12, v18
+    \type v6, v6, v14, v19
+.irpc i, 0246
+    vmax.vx v\i, v\i, zero
+.endr
+    vsetvli zero, zero, e8, m1, ta, ma
+    vnclipu.wi v8, v0, \shift
+    vnclipu.wi v9, v2, \shift
+    vnclipu.wi v10, v4, \shift
+    vnclipu.wi v11, v6, \shift
+    vssseg4e8.v v8, (a0), a1
+    ret
+8:
+    vsetvli t0, a5, e16, m1, ta, ma
+    vlseg8e16.v v0, (a2)
+    vlseg8e16.v v8, (a3)
+.ifc \type, mask
+    vlseg8e8.v v16, (a6)
+    slli t1, t0, 3
+    add a6, a6, t1
+.endif
+    sub a5, a5, t0
+    slli t1, t0, 4
+    add a2, a2, t1
+    add a3, a3, t1
+    \type v0, v0, v8, v16
+    \type v1, v1, v9, v17
+    \type v2, v2, v10, v18
+    \type v3, v3, v11, v19
+    \type v4, v4, v12, v20
+    \type v5, v5, v13, v21
+    \type v6, v6, v14, v22
+    \type v7, v7, v15, v23
+.irpc i, 01234567
+    vmax.vx v\i, v\i, zero
+.endr
+    vsetvli zero, zero, e8, mf2, ta, ma
+    vnclipu.wi v8,  v0, \shift
+    vnclipu.wi v9,  v1, \shift
+    vnclipu.wi v10, v2, \shift
+    vnclipu.wi v11, v3, \shift
+    vnclipu.wi v12, v4, \shift
+    vnclipu.wi v13, v5, \shift
+    vnclipu.wi v14, v6, \shift
+    vnclipu.wi v15, v7, \shift
+    vssseg8e8.v v8, (a0), a1
+    mul t0, t0, a1
+    add a0, a0, t0
+    bnez a5, 8b
+    ret
+128:
+    sub a1, a1, a4
+    mv t4, a4
+1280:
+.ifc \type, avg
+    vsetvli t0, a4, e16, m8, ta, ma
+.else
+    vsetvli t0, a4, e16, m4, ta, ma
+.endif
+    vle16.v v0, (a2)
+    vle16.v v8, (a3)
+.ifc \type, mask
+    vle8.v v4, (a6)
+    add a6, a6, t0
+.endif
+    sub a4, a4, t0
+    slli t1, t0, 1
+    add a2, a2, t1
+    add a3, a3, t1
+    \type v0, v0, v8, v4
+    vmax.vx v0, v0, zero
+.ifc \type, avg
+    vsetvli zero, zero, e8, m4, ta, ma
+.else
+    vsetvli zero, zero, e8, m2, ta, ma
+.endif
+    vnclipu.wi v8, v0, \shift
+    vse8.v v8, (a0)
+    add a0, a0, t0
+    bnez a4, 1280b
+    add a0, a0, a1
+    mv a4, t4
+    addi a5, a5, -1
+    bnez a5, 1280b
+    ret
+endfunc
+.endm
+
+bidir_fn avg,   5
+bidir_fn w_avg, 0
+bidir_fn mask,  0
+
+function blend_8bpc_rvv, export=1, ext=v
+    csrw vxrm, zero
+    vsetvli t0, zero, e8, m4, ta, ma
+    li t0, 64
+    vmv.v.x v12, t0
+1:
+    mv t1, a3
+    mv t2, a0
+2:
+    vsetvli t0, t1, e8, m4, ta, ma
+    vle8.v v0, (t2)
+    vle8.v v4, (a2)
+    vle8.v v8, (a5)
+    sub t1, t1, t0
+    add a2, a2, t0
+    add a5, a5, t0
+    vwmulu.vv v16, v4, v8
+    vsub.vv v8, v12, v8
+    vwmaccu.vv v16, v0, v8
+    vnclipu.wi v0, v16, 6
+    vse8.v v0, (t2)
+    add t2, t2, t0
+    bnez t1, 2b
+
+    add a0, a0, a1
+    addi a4, a4, -1
+    bnez a4, 1b
+    ret
+endfunc
+
+function blend_v_8bpc_rvv, export=1, ext=v
+    csrw vxrm, zero
+    li t6, 64
+    la a5, dav1d_obmc_masks
+    add a5, a5, a3
+    add a6, a3, a3
+    add a6, a6, a3
+    srli a6, a6, 2
+1:
+    vsetvli t0, a6, e8, m4, ta, ma
+    vle8.v v8, (a5)
+    add a5, a5, t0
+    sub a6, a6, t0
+    mv t1, a0
+    mv t2, a2
+    mv t3, a4
+    vmv.v.x v12, t6
+    vsub.vv v12, v12, v8
+2:
+    vle8.v v0, (t1)
+    vle8.v v4, (t2)
+    add t2, t2, a3
+    addi t3, t3, -1
+    vwmulu.vv v16, v4, v8
+    vwmaccu.vv v16, v0, v12
+    vnclipu.wi v0, v16, 6
+    vse8.v v0, (t1)
+    add t1, t1, a1
+    bnez t3, 2b
+
+    add a0, a0, t0
+    add a2, a2, t0
+    bnez a6, 1b
+    ret
+endfunc
+
+function blend_h_8bpc_rvv, export=1, ext=v
+    csrw vxrm, zero
+    la a5, dav1d_obmc_masks
+    add a5, a5, a4
+    add t0, a4, a4
+    add a4, a4, t0
+    srli a4, a4, 2
+    li t5, 64
+1:
+    mv t1, a3
+    mv t2, a0
+    lbu t3, (a5)
+    addi a5, a5, 1
+    sub t4, t5, t3
+2:
+    vsetvli t0, t1, e8, m4, ta, ma
+    vle8.v v0, (t2)
+    vle8.v v4, (a2)
+    sub t1, t1, t0
+    add a2, a2, t0
+    vwmulu.vx v8, v0, t4
+    vwmaccu.vx v8, t3, v4
+    vnclipu.wi v0, v8, 6
+    vse8.v v0, (t2)
+    add t2, t2, t0
+    bnez t1, 2b
+
+    add a0, a0, a1
+    addi a4, a4, -1
+    bnez a4, 1b
+    ret
+endfunc
