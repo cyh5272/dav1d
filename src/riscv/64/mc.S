@@ -51,7 +51,7 @@ function \type\()_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
 .ifc \type, w_avg
     li a7, 16
-    subw a7, a7, a6
+    sub a7, a7, a6
 .endif
 .ifc \type, mask
     li a7, 64
@@ -87,11 +87,11 @@ function \type\()_8bpc_rvv, export=1, ext=v
     vlseg8e16.v v8, (a3)
 .ifc \type, mask
     vlseg8e8.v v16, (a6)
-    slliw t1, t0, 3
+    slli t1, t0, 3
     add a6, a6, t1
 .endif
     sub a5, a5, t0
-    slliw t1, t0, 4
+    slli t1, t0, 4
     add a2, a2, t1
     add a3, a3, t1
     \type v0, v0, v8, v16
@@ -134,8 +134,8 @@ function \type\()_8bpc_rvv, export=1, ext=v
     vle8.v v4, (a6)
     add a6, a6, t0
 .endif
-    subw a4, a4, t0
-    slliw t1, t0, 1
+    sub a4, a4, t0
+    slli t1, t0, 1
     add a2, a2, t1
     add a3, a3, t1
     \type v0, v0, v8, v4
@@ -151,7 +151,7 @@ function \type\()_8bpc_rvv, export=1, ext=v
     bnez a4, 1280b
     add a0, a0, a1
     mv a4, t4
-    addiw a5, a5, -1
+    addi a5, a5, -1
     bnez a5, 1280b
     ret
 endfunc
@@ -174,7 +174,7 @@ function blend_8bpc_rvv, export=1, ext=v
     vle8.v v0, (t2)
     vle8.v v4, (a2)
     vle8.v v8, (a5)
-    subw t1, t1, t0
+    sub t1, t1, t0
     add a2, a2, t0
     add a5, a5, t0
     vwmulu.vv v16, v4, v8
@@ -186,7 +186,7 @@ function blend_8bpc_rvv, export=1, ext=v
     bnez t1, 2b
 
     add a0, a0, a1
-    addiw a4, a4, -1
+    addi a4, a4, -1
     bnez a4, 1b
     ret
 endfunc
@@ -196,14 +196,14 @@ function blend_v_8bpc_rvv, export=1, ext=v
     li t6, 64
     la a5, dav1d_obmc_masks
     add a5, a5, a3
-    addw a6, a3, a3
-    addw a6, a6, a3
-    srliw a6, a6, 2
+    add a6, a3, a3
+    add a6, a6, a3
+    srli a6, a6, 2
 1:
     vsetvli t0, a6, e8, m4, ta, ma
     vle8.v v8, (a5)
     add a5, a5, t0
-    subw a6, a6, t0
+    sub a6, a6, t0
     mv t1, a0
     mv t2, a2
     mv t3, a4
@@ -213,7 +213,7 @@ function blend_v_8bpc_rvv, export=1, ext=v
     vle8.v v0, (t1)
     vle8.v v4, (t2)
     add t2, t2, a3
-    addiw t3, t3, -1
+    addi t3, t3, -1
     vwmulu.vv v16, v4, v8
     vwmaccu.vv v16, v0, v12
     vnclipu.wi v0, v16, 6
@@ -231,21 +231,21 @@ function blend_h_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
     la a5, dav1d_obmc_masks
     add a5, a5, a4
-    addw t0, a4, a4
-    addw a4, a4, t0
-    srliw a4, a4, 2
+    add t0, a4, a4
+    add a4, a4, t0
+    srli a4, a4, 2
     li t5, 64
 1:
     mv t1, a3
     mv t2, a0
     lbu t3, (a5)
     addi a5, a5, 1
-    subw t4, t5, t3
+    sub t4, t5, t3
 2:
     vsetvli t0, t1, e8, m4, ta, ma
     vle8.v v0, (t2)
     vle8.v v4, (a2)
-    subw t1, t1, t0
+    sub t1, t1, t0
     add a2, a2, t0
     vwmulu.vx v8, v0, t4
     vwmaccu.vx v8, t3, v4
@@ -255,7 +255,7 @@ function blend_h_8bpc_rvv, export=1, ext=v
     bnez t1, 2b
 
     add a0, a0, a1
-    addiw a4, a4, -1
+    addi a4, a4, -1
     bnez a4, 1b
     ret
 endfunc
