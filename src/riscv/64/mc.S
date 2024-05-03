@@ -29,9 +29,11 @@
 
 function avg_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
+    li t0, 8
+    bgtu a4, t0, 16f
+4:
     li t0, 4
     bgtu a4, t0, 8f
-4:
     vsetvli zero, a5, e16, m2, ta, ma
     vlseg4e16.v v0, (a2)
     vlseg4e16.v v8, (a3)
@@ -39,10 +41,9 @@ function avg_8bpc_rvv, export=1, ext=v
     vadd.vv v2, v2, v10
     vadd.vv v4, v4, v12
     vadd.vv v6, v6, v14
-    vmax.vx v0, v0, zero
-    vmax.vx v2, v2, zero
-    vmax.vx v4, v4, zero
-    vmax.vx v6, v6, zero
+.irpc i, 0246
+    vmax.vx v\i, v\i, zero
+.endr
     vsetvli zero, zero, e8, m1, ta, ma
     vnclipu.wi v8, v0, 4+1
     vnclipu.wi v9, v2, 4+1
@@ -50,8 +51,40 @@ function avg_8bpc_rvv, export=1, ext=v
     vnclipu.wi v11, v6, 4+1
     vssseg4e8.v v8, (a0), a1
     ret
-
 8:
+    vsetvli t0, a5, e16, m1, ta, ma
+    vlseg8e16.v v0, (a2)
+    vlseg8e16.v v8, (a3)
+    sub a5, a5, t0
+    slliw t1, t0, 4
+    add a2, a2, t1
+    add a3, a3, t1
+    vadd.vv v0, v0, v8
+    vadd.vv v1, v1, v9
+    vadd.vv v2, v2, v10
+    vadd.vv v3, v3, v11
+    vadd.vv v4, v4, v12
+    vadd.vv v5, v5, v13
+    vadd.vv v6, v6, v14
+    vadd.vv v7, v7, v15
+.irpc i, 01234567
+    vmax.vx v\i, v\i, zero
+.endr
+    vsetvli zero, zero, e8, mf2, ta, ma
+    vnclipu.wi v8,  v0, 4+1
+    vnclipu.wi v9,  v1, 4+1
+    vnclipu.wi v10, v2, 4+1
+    vnclipu.wi v11, v3, 4+1
+    vnclipu.wi v12, v4, 4+1
+    vnclipu.wi v13, v5, 4+1
+    vnclipu.wi v14, v6, 4+1
+    vnclipu.wi v15, v7, 4+1
+    vssseg8e8.v v8, (a0), a1
+    mul t0, t0, a1
+    add a0, a0, t0
+    bnez a5, 8b
+    ret
+16:
     sub a1, a1, a4
     mv t4, a4
 .loop:
