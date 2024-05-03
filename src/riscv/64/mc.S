@@ -29,14 +29,13 @@
 
 function avg_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
-1:
-    mv t1, a4
-    mv t2, a0
-2:
-    vsetvli t0, t1, e16, m8, ta, ma
+    sub a1, a1, a4
+    mv t4, a4
+.loop:
+    vsetvli t0, a4, e16, m8, ta, ma
     vle16.v v0, (a2)
     vle16.v v8, (a3)
-    subw t1, t1, t0
+    subw a4, a4, t0
     slliw t3, t0, 1
     add a2, a2, t3
     add a3, a3, t3
@@ -44,13 +43,13 @@ function avg_8bpc_rvv, export=1, ext=v
     vmax.vx v16, v16, zero
     vsetvli zero, zero, e8, m4, ta, ma
     vnclipu.wi v0, v16, 4+1
-    vse8.v v0, (t2)
-    add t2, t2, t0
-    bnez t1, 2b
-
+    vse8.v v0, (a0)
+    add a0, a0, t0
+    bnez a4, .loop
     add a0, a0, a1
     addiw a5, a5, -1
-    bnez a5, 1b
+    mv a4, t4
+    bnez a5, .loop
     ret
 endfunc
 
@@ -58,9 +57,9 @@ function w_avg_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
     li t4, 16
     subw t4, t4, a6
+    sub a1, a1, a4
 1:
     mv t1, a4
-    mv t2, a0
 2:
     vsetvli t0, t1, e16, m4, ta, ma
     vle16.v v0, (a2)
@@ -75,8 +74,8 @@ function w_avg_8bpc_rvv, export=1, ext=v
     vmax.vx v0, v0, zero
     vsetvli zero, zero, e8, m2, ta, ma
     vnclipu.wi v4, v0, 0
-    vse8.v v4, (t2)
-    add t2, t2, t0
+    vse8.v v4, (a0)
+    add a0, a0, t0
     bnez t1, 2b
 
     add a0, a0, a1
@@ -90,9 +89,9 @@ function mask_8bpc_rvv, export=1, ext=v
     vsetvli t0, zero, e16, m4, ta, ma
     li t0, 64
     vmv.v.x v12, t0
+    sub a1, a1, a4
 1:
     mv t1, a4
-    mv t2, a0
 2:
     vsetvli t0, t1, e8, m2, ta, ma
     vle8.v v0, (a6)
@@ -112,8 +111,8 @@ function mask_8bpc_rvv, export=1, ext=v
     vmax.vx v0, v0, zero
     vsetvli zero, zero, e8, m2, ta, ma
     vnclipu.wi v4, v0, 0
-    vse8.v v4, (t2)
-    add t2, t2, t0
+    vse8.v v4, (a0)
+    add a0, a0, t0
     bnez t1, 2b
 
     add a0, a0, a1
