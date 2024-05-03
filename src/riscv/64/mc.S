@@ -29,6 +29,29 @@
 
 function avg_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
+    li t0, 4
+    bgtu a4, t0, 8f
+4:
+    vsetvli zero, a5, e16, m2, ta, ma
+    vlseg4e16.v v0, (a2)
+    vlseg4e16.v v8, (a3)
+    vadd.vv v0, v0, v8
+    vadd.vv v2, v2, v10
+    vadd.vv v4, v4, v12
+    vadd.vv v6, v6, v14
+    vmax.vx v0, v0, zero
+    vmax.vx v2, v2, zero
+    vmax.vx v4, v4, zero
+    vmax.vx v6, v6, zero
+    vsetvli zero, zero, e8, m1, ta, ma
+    vnclipu.wi v8, v0, 4+1
+    vnclipu.wi v9, v2, 4+1
+    vnclipu.wi v10, v4, 4+1
+    vnclipu.wi v11, v6, 4+1
+    vssseg4e8.v v8, (a0), a1
+    ret
+
+8:
     sub a1, a1, a4
     mv t4, a4
 .loop:
