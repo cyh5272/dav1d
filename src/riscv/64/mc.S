@@ -29,11 +29,13 @@
 
 function avg_8bpc_rvv, export=1, ext=v
     csrw vxrm, zero
+    li t0, 128
+    bgeu a4, t0, 128f
+    li t0, 16
+    bgeu a4, t0, 16f
     li t0, 8
-    bgtu a4, t0, 16f
+    bgeu a4, t0, 8f
 4:
-    li t0, 4
-    bgtu a4, t0, 8f
     vsetvli zero, a5, e16, m2, ta, ma
     vlseg4e16.v v0, (a2)
     vlseg4e16.v v8, (a3)
@@ -85,9 +87,29 @@ function avg_8bpc_rvv, export=1, ext=v
     bnez a5, 8b
     ret
 16:
+32:
+64:
+    slliw t0, a4, 1
+640:
+    vsetvli zero, a4, e16, m8, ta, ma
+    vle16.v v0, (a2)
+    vle16.v v8, (a3)
+    add a2, a2, t0
+    add a3, a3, t0
+    vadd.vv v0, v0, v8
+    vmax.vx v0, v0, zero
+    vsetvli zero, zero, e8, m4, ta, ma
+    vnclipu.wi v8, v0, 4+1
+    vse8.v v8, (a0)
+    add a0, a0, a1
+    addi a5, a5, -1
+    bnez a5, 640b
+    ret
+
+128:
     sub a1, a1, a4
-    mv t4, a4
-.loop:
+    mv t1, a4
+1280:
     vsetvli t0, a4, e16, m8, ta, ma
     vle16.v v0, (a2)
     vle16.v v8, (a3)
@@ -101,11 +123,11 @@ function avg_8bpc_rvv, export=1, ext=v
     vnclipu.wi v0, v16, 4+1
     vse8.v v0, (a0)
     add a0, a0, t0
-    bnez a4, .loop
+    bnez a4, 1280b
     add a0, a0, a1
+    mv a4, t1
     addiw a5, a5, -1
-    mv a4, t4
-    bnez a5, .loop
+    bnez a5, 1280b
     ret
 endfunc
 
