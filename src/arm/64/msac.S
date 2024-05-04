@@ -39,6 +39,9 @@ const coeffs
         .short 60, 56, 52, 48, 44, 40, 36, 32, 28, 24, 20, 16, 12, 8, 4, 0
         .short 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0
 endconst
+const masks8
+        .short -0x202, -0x202, -0x202, -0x202, -0x202, -0x202, -0x202, 0xF0E
+endconst
 
 .macro ld1_n d0, d1, src, sz, n
 .if \n <= 8
@@ -117,41 +120,69 @@ endconst
 
 function msac_decode_symbol_adapt4_neon, export=1
 .macro decode_update sz, szb, n
+.if \n == 16
         sub             sp,  sp,  #48
+.endif
         add             x8,  x0,  #RNG
         ld1_n           v0,  v1,  x1,  \sz, \n                    // cdf
-        ld1r            {v4\sz},  [x8]                            // rng
+        ld1r            {v29\sz}, [x8]                            // rng
         movrel          x9,  coeffs, 30
         movi            v31\sz, #0x7f, lsl #8                     // 0x7f00
         sub             x9,  x9,  x2, lsl #1
         mvni            v30\sz, #0x3f                             // 0xffc0
-        and             v7\szb, v4\szb, v31\szb                   // rng & 0x7f00
-        str             h4,  [sp, #14]                            // store original u = s->rng
+        and             v7\szb, v29\szb, v31\szb                  // rng & 0x7f00
+.if \n == 16
+        str             h29, [sp, #14]                            // store original u = s->rng
+.endif
         and_n           v2,  v3,  v0,  v1,  v30, v30, \szb, \n    // cdf & 0xffc0
 
         ld1_n           v4,  v5,  x9,  \sz, \n                    // EC_MIN_PROB * (n_symbols - ret)
         sqdmulh_n       v6,  v7,  v2,  v3,  v7,  v7,  \sz, \n     // ((cdf >> EC_PROB_SHIFT) * (r - 128)) >> 1
-        add             x8,  x0,  #DIF + 6
+        //TODO: old version better when using width 4?
+        //add             x8,  x0,  #DIF + 6
+        ldr             d28, [x0, #DIF]
 
         add_n           v4,  v5,  v2,  v3,  v4,  v5,  \sz, \n     // v = cdf + EC_MIN_PROB * (n_symbols - ret)
         add_n           v4,  v5,  v6,  v7,  v4,  v5,  \sz, \n     // v = ((cdf >> EC_PROB_SHIFT) * r) >> 1 + EC_MIN_PROB * (n_symbols - ret)
 
-        ld1r            {v6\sz},  [x8]                            // dif >> (EC_WIN_SIZE - 16)
-        str_n           q4,  q5,  sp, #16, \n                     // store v values to allow indexed access
-
-        cmhs_n          v2,  v3,  v6,  v6,  v4,  v5,  \sz,  \n    // c >= v
-
+        dup             v30\sz, v28.h[3]                          // dif >> (EC_WIN_SIZE - 16)
+        //ld1r            {v6\sz},  [x8]                          // dif >> (EC_WIN_SIZE - 16)
 .if \n == 16
-        add             v6\sz,  v2\sz,  v3\sz
-        addv            h6,  v6\sz                                // -n + ret
-.else
-        addv            h6,  v2\sz                                // -n + ret
+        str_n           q4,  q5,  sp, #16, \n                     // store v values to allow indexed access
 .endif
-        ldr             w4,  [x0, #ALLOW_UPDATE_CDF]
-        smov            w15, v6.h[0]
-        add             w15, w15, #\n                             // ret
 
-        cbz             w4,  L(renorm)
+.if \n == 8
+        // TODO: Get address based on coeff
+        movrel          x9, masks8
+        ld1             {v31.16b}, [x9]
+.endif
+
+        cmhs_n          v2,  v3,  v30, v30, v4,  v5,  \sz,  \n    // c >= v
+.if \n == 4
+        ext             v29\szb, v29\szb, v4\szb, #6              // u
+        umov            x15, v2.d[0]
+        ldr             w4,  [x0, #ALLOW_UPDATE_CDF]
+        rev             x15, x15
+        sub             v29\sz, v29\sz, v4\sz                     // rng = u-v
+        // rev + clz = count trailing zeros
+        clz             x15, x15                                  // 16*ret
+.elseif \n == 8
+        and             v31.16b, v31.16b, v2.16b
+        ext             v29\szb, v29\szb, v4\szb, #14             // u
+        addv            h31, v31\sz                               // ((2*ret + 1) << 8) | (2*ret)
+        ldr             w4,  [x0, #ALLOW_UPDATE_CDF]
+        sub             v30\sz, v30\sz, v4\sz                     // (dif >> 48) - v
+        smov            w15, v31.b[0]                             // 2*ret
+        sub             v29\sz, v29\sz, v4\sz                     // rng = u-v
+.elseif \n == 16
+        add             v6\sz,  v2\sz,  v3\sz
+        addv            h31, v6\sz                                // -n + ret
+        ldr             w4,  [x0, #ALLOW_UPDATE_CDF]
+        smov            w15, v31.h[0]
+.endif
+
+        cbz             w4,  0f
+
         // update_cdf
         ldrh            w3,  [x1, x2, lsl #1]                     // count = cdf[n_symbols]
 .if \n == 16
@@ -181,27 +212,88 @@ function msac_decode_symbol_adapt4_neon, export=1
         add_n           v0,  v1,  v16, v17, v2,  v3,  \sz, \n     // cdf + (32768 - cdf[i]) >> rate
         st1_n           v0,  v1,  x1,  \sz, \n
         strh            w3,  [x1, x2, lsl #1]
-.endm
 
-        decode_update   .4h, .8b, 4
+0:
+        // renorm
+.if \n == 4
+        ldr             w6,  [x0, #CNT]
+        ldr             x7,  [x0, #DIF]
+        mov             x3,  v4.d[0]           // v (packed)
+        mov             x4,  v29.d[0]          // rng (packed)
 
-L(renorm):
-        add             x8,  sp,  w15, uxtw #1
-        ldrh            w3,  [x8, #16]         // v
-        ldurh           w4,  [x8, #14]         // u
+        // Shift 'v'/'rng' for ret into the 16 least sig bits. There is
+        //  garbage in the remaining bits, but we can work around this.
+        lsr             x3,  x3,  x15          // v
+        lsr             x4,  x4,  x15          // rng
+        lsl             w5,  w4,  #16          // rng << 16
+        clz             w5,  w5                // d = clz(rng << 16)
+        sub             x7,  x7,  x3, lsl #48  // dif - (v << 48)
+        lsl             w4,  w4,  w5           // rng << d
+        subs            w6,  w6,  w5           // cnt -= d
+        lsl             x7,  x7,  x5           // (dif - (v << 48)) << d
+        strh            w4,  [x0, #RNG]
+        b.lo            1f
+        str             w6,  [x0, #CNT]
+        str             x7,  [x0, #DIF]
+        lsr             w0,  w15, #4
+        ret
+1:
+        lsr             w15, w15, #4
+        b L(refill)
+.elseif \n == 8
+        ldr             w6,  [x0, #CNT]
+        tbl             v30.8b, {v30.16b}, v31.8b
+        tbl             v29.8b, {v29.16b}, v31.8b
+        ins             v28.h[3], v30.h[0]     // dif - (v << 48)
+        clz             v0.4h,  v29.4h         // d = clz(rng)
+        umov            w5,  v0.h[0]
+        ushl            v29.4h, v29.4h, v0.4h  // rng << d
+
+        // The vec for clz(rng) is filled with garbage after the first short,
+        //  but ushl/sshl conveniently uses only the first byte for the shift
+        //  amount.
+        ushl            d28, d28, d0           // (dif - (v << 48)) << d
+
+        subs            w6,  w6,  w5           // cnt -= d
+        str             h29, [x0, #RNG]
+        b.lo            1f
+        str             w6,  [x0, #CNT]
+        str             d28, [x0, #DIF]
+        lsr             w0,  w15, #1           // ret
+        ret
+1:
+        lsr             w15, w15, #1           // ret
+        mov             x7, v28.d[0]
+        b L(refill)
+.elseif \n == 16
+        add             x8,  sp,  w15, sxtw #1
+        ldrh            w3,  [x8, #48]         // v
+        ldurh           w4,  [x8, #46]         // u
         ldr             w6,  [x0, #CNT]
         ldr             x7,  [x0, #DIF]
         sub             w4,  w4,  w3           // rng = u - v
         clz             w5,  w4                // clz(rng)
         eor             w5,  w5,  #16          // d = clz(rng) ^ 16
         sub             x7,  x7,  x3, lsl #48  // dif - (v << 48)
-L(renorm2):
         lsl             w4,  w4,  w5           // rng << d
         subs            w6,  w6,  w5           // cnt -= d
         lsl             x7,  x7,  x5           // (dif - (v << 48)) << d
         str             w4,  [x0, #RNG]
-        b.hs            4f
+        add             sp,  sp,  #48
+        b.lo            1f
+        str             w6,  [x0, #CNT]
+        str             x7,  [x0, #DIF]
+        add             w0,  w15, #\n          // ret
+        ret
+1:
+        add             w15, w15, #\n          // ret
+        b L(refill)
+.endif
+.endm
 
+        decode_update   .4h, .8b, 4
+
+L(refill):
         // refill
         ldp             x3,  x4,  [x0]         // BUF_POS, BUF_END
         add             x5,  x3,  #8
@@ -229,7 +321,7 @@ L(renorm2):
         str             x7,  [x0, #DIF]
 
         mov             w0,  w15
-        add             sp,  sp,  #48
+        //smov            w0, v31.h[0]
         ret
 
 5:      // pad_with_ones
@@ -258,12 +350,10 @@ endfunc
 
 function msac_decode_symbol_adapt8_neon, export=1
         decode_update   .8h, .16b, 8
-        b               L(renorm)
 endfunc
 
 function msac_decode_symbol_adapt16_neon, export=1
         decode_update   .8h, .16b, 16
-        b               L(renorm)
 endfunc
 
 function msac_decode_hi_tok_neon, export=1
@@ -276,25 +366,27 @@ function msac_decode_hi_tok_neon, export=1
         ld1r            {v3.4h},  [x16]           // rng
         ld1             {v29.4h}, [x17]           // EC_MIN_PROB * (n_symbols - ret)
         add             x17, x0,  #DIF + 6
-        mov             w13, #-24
+        mov             w13, #-24*8
         and             v17.8b,  v0.8b,   v30.8b  // cdf & 0xffc0
         ldr             w10, [x0, #ALLOW_UPDATE_CDF]
         ld1r            {v1.8h},  [x17]           // dif >> (EC_WIN_SIZE - 16)
-        sub             sp,  sp,  #48
+        //dup             v1.8h, v28.h[3]
         ldr             w6,  [x0, #CNT]
         ldr             x7,  [x0, #DIF]
+        //mov             x7,  v28.d[0]
 1:
         and             v7.8b,   v3.8b,   v31.8b  // rng & 0x7f00
         sqdmulh         v6.4h,   v17.4h,  v7.4h   // ((cdf >> EC_PROB_SHIFT) * (r - 128)) >> 1
         add             v4.4h,   v17.4h,  v29.4h  // v = cdf + EC_MIN_PROB * (n_symbols - ret)
         add             v4.4h,   v6.4h,   v4.4h   // v = ((cdf >> EC_PROB_SHIFT) * r) >> 1 + EC_MIN_PROB * (n_symbols - ret)
-        str             h3,  [sp, #14]            // store original u = s->rng
         cmhs            v2.4h,   v1.4h,   v4.4h   // c >= v
-        str             q4,  [sp, #16]            // store v values to allow indexed access
-        addv            h6,  v2.4h                // -4 + ret
-        add             w13, w13, #5
-        smov            w15, v6.h[0]
-        add             w15, w15, #4              // ret
+        add             w13, w13, #5*8
+        ext             v18.8b, v3.8b,  v4.8b, #6 // u
+        umov            x15, v2.d[0]
+        rev             x15, x15
+        sub             v18.4h, v18.4h, v4.4h     // rng = u-v
+        // rev + clz = count trailing zeros
+        clz             x15, x15                  // 16*ret
 
         cbz             w10, 2f
         // update_cdf
@@ -302,29 +394,33 @@ function msac_decode_hi_tok_neon, export=1
         mov             w4,  #-5
         orr             v2.4h, #0x80, lsl #8      // i >= val ? -1 : 32768
         sub             w4,  w4,  w9, lsr #4      // -((count >> 4) + 5)
-        sub             v4.4h,   v2.4h,   v0.4h   // (32768 - cdf[i]) or (-1 - cdf[i])
+        sub             v2.4h,   v2.4h,   v0.4h   // (32768 - cdf[i]) or (-1 - cdf[i])
         dup             v6.4h,    w4              // -rate
 
         sub             w9,  w9,  w9, lsr #5      // count - (count == 32)
-        sshl            v4.4h,   v4.4h,   v6.4h   // ({32768,-1} - cdf[i]) >> rate
+        sshl            v2.4h,   v2.4h,   v6.4h   // ({32768,-1} - cdf[i]) >> rate
         add             w9,  w9,  #1              // count + (count < 32)
-        add             v0.4h,   v5.4h,   v4.4h   // cdf[i] + (32768 - cdf[i]) >> rate
+        add             v0.4h,   v5.4h,   v2.4h   // cdf[i] + (32768 - cdf[i]) >> rate
         st1             {v0.4h},  [x1]
         and             v17.8b,  v0.8b,   v30.8b  // cdf & 0xffc0
         strh            w9,  [x1, #6]
 
 2:
-        add             x8,  sp,  w15, uxtw #1
-        ldrh            w3,  [x8, #16]         // v
-        ldurh           w4,  [x8, #14]         // u
-        sub             w4,  w4,  w3           // rng = u - v
-        clz             w5,  w4                // clz(rng)
-        eor             w5,  w5,  #16          // d = clz(rng) ^ 16
+        mov             x3,  v4.d[0]           // v (packed)
+        mov             x4,  v18.d[0]          // rng (packed)
+
+        // Shift 'v'/'rng' for ret into the 16 least sig bits. There is
+        //  garbage in the remaining bits, but we can work around this.
+        lsr             x3,  x3,  x15          // v
+        lsr             x4,  x4,  x15          // rng
+        lsl             w5,  w4,  #16          // rng << 16
+        clz             w5,  w5                // d = clz(rng << 16)
+
         sub             x7,  x7,  x3, lsl #48  // dif - (v << 48)
         lsl             w4,  w4,  w5           // rng << d
         subs            w6,  w6,  w5           // cnt -= d
         lsl             x7,  x7,  x5           // (dif - (v << 48)) << d
-        str             w4,  [x0, #RNG]
+        strh            w4,  [x0, #RNG]
         dup             v3.4h,   w4
         b.hs            5f
 
@@ -351,17 +447,15 @@ function msac_decode_hi_tok_neon, export=1
         orr             x7,  x7,  x8           // dif |= next_bits
 
 5:      // end
-        lsl             w15, w15, #1
-        sub             w15, w15, #5
+        sub             w15, w15, #5*8
         lsr             x12, x7,  #48
         adds            w13, w13, w15          // carry = tok_br < 3 || tok == 15
         dup             v1.8h,   w12
         b.cc            1b                     // loop if !carry
-        add             w13, w13, #30
+        add             w13, w13, #30*8
         str             w6,  [x0, #CNT]
-        add             sp,  sp,  #48
         str             x7,  [x0, #DIF]
-        lsr             w0,  w13, #1
+        lsr             w0,  w13, #4
         ret
 
 6:      // pad_with_ones
@@ -390,7 +484,6 @@ endfunc
 
 function msac_decode_bool_equi_neon, export=1
         ldp             w5,  w6,  [x0, #RNG]   // + CNT
-        sub             sp,  sp,  #48
         ldr             x7,  [x0, #DIF]
         bic             w4,  w5,  #0xff        // r &= 0xff00
         add             w4,  w4,  #8
@@ -403,12 +496,20 @@ function msac_decode_bool_equi_neon, export=1
 
         clz             w5,  w4                // clz(rng)
         eor             w5,  w5,  #16          // d = clz(rng) ^ 16
-        b               L(renorm2)
+        lsl             w4,  w4,  w5           // rng << d
+        subs            w6,  w6,  w5           // cnt -= d
+        lsl             x7,  x7,  x5           // (dif - (v << 48)) << d
+        str             w4,  [x0, #RNG]
+        b.lo            L(refill)
+
+        str             w6,  [x0, #CNT]
+        str             x7,  [x0, #DIF]
+        mov             w0,  w15
+        ret
 endfunc
 
 function msac_decode_bool_neon, export=1
         ldp             w5,  w6,  [x0, #RNG]   // + CNT
-        sub             sp,  sp,  #48
         ldr             x7,  [x0, #DIF]
         lsr             w4,  w5,  #8           // r >> 8
         bic             w1,  w1,  #0x3f        // f &= ~63
@@ -423,13 +524,21 @@ function msac_decode_bool_neon, export=1
 
         clz             w5,  w4                // clz(rng)
         eor             w5,  w5,  #16          // d = clz(rng) ^ 16
-        b               L(renorm2)
+        lsl             w4,  w4,  w5           // rng << d
+        subs            w6,  w6,  w5           // cnt -= d
+        lsl             x7,  x7,  x5           // (dif - (v << 48)) << d
+        str             w4,  [x0, #RNG]
+        b.lo            L(refill)
+
+        str             w6,  [x0, #CNT]
+        str             x7,  [x0, #DIF]
+        mov             w0,  w15
+        ret
 endfunc
 
 function msac_decode_bool_adapt_neon, export=1
         ldr             w9,  [x1]              // cdf[0-1]
         ldp             w5,  w6,  [x0, #RNG]   // + CNT
-        sub             sp,  sp,  #48
         ldr             x7,  [x0, #DIF]
         lsr             w4,  w5,  #8           // r >> 8
         and             w2,  w9,  #0xffc0      // f &= ~63
@@ -447,7 +556,7 @@ function msac_decode_bool_adapt_neon, export=1
         clz             w5,  w4                // clz(rng)
         eor             w5,  w5,  #16          // d = clz(rng) ^ 16
 
-        cbz             w10, L(renorm2)
+        cbz             w10, 1f
 
         lsr             w2,  w9,  #16          // count = cdf[1]
         and             w9,  w9,  #0xffff      // cdf[0]
@@ -465,5 +574,15 @@ function msac_decode_bool_adapt_neon, export=1
         strh            w9,  [x1]
         strh            w10, [x1, #2]
 
-        b               L(renorm2)
+1:
+        lsl             w4,  w4,  w5           // rng << d
+        subs            w6,  w6,  w5           // cnt -= d
+        lsl             x7,  x7,  x5           // (dif - (v << 48)) << d
+        str             w4,  [x0, #RNG]
+        b.lo            L(refill)
+
+        str             w6,  [x0, #CNT]
+        str             x7,  [x0, #DIF]
+        mov             w0,  w15
+        ret
 endfunc
