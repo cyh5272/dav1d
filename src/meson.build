@@ -261,6 +261,7 @@ if is_asm_enabled
         if host_machine.cpu_family() == 'riscv64'
             libdav1d_sources += files(
                 'riscv/64/itx.S',
+                'riscv/64/mc.S',
             )
         endif
     endif
