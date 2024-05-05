@@ -32,6 +32,10 @@ decl_blend_fn(BF(dav1d_blend, rvv));
 decl_blend_dir_fn(BF(dav1d_blend_h, rvv));
 decl_blend_dir_fn(BF(dav1d_blend_v, rvv));
 
+decl_blend_fn(BF(dav1d_blend_vl256, rvv));
+
+int dav1d_get_vlenb(void);
+
 static ALWAYS_INLINE void mc_dsp_init_riscv(Dav1dMCDSPContext *const c) {
   const unsigned flags = dav1d_get_cpu_flags();
 
@@ -41,5 +45,9 @@ static ALWAYS_INLINE void mc_dsp_init_riscv(Dav1dMCDSPContext *const c) {
   c->blend = BF(dav1d_blend, rvv);
   c->blend_h = BF(dav1d_blend_h, rvv);
   c->blend_v = BF(dav1d_blend_v, rvv);
+
+  if (dav1d_get_vlenb()*8 >= 256) {
+    c->blend = BF(dav1d_blend_vl256, rvv);
+  }
 #endif
 }
