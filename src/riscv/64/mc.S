@@ -103,43 +103,67 @@ L(blend_epilog):
   ret
 endfunc
 
+function blend_h_vl256_8bpc_rvv, export=1, ext=v
+  li t6, 32
+  li t0, 4
+  ble a3, t0, 24f
+  li t0, 8
+  beq a3, t0, 8f
+  li t0, 16
+  beq a3, t0, 16f
+  li t0, 32
+  vsetvli zero, t0, e8, m1, ta, ma
+  j L(blend_h_epilog)
+16:
+  vsetivli zero, 16, e8, mf2, ta, ma
+  j L(blend_h_epilog)
+8:
+  vsetivli zero, 8, e8, mf4, ta, ma
+  j L(blend_h_epilog)
+24:
+  vsetvli zero, a3, e8, mf8, ta, ma
+  j L(blend_h_epilog)
+endfunc
+
 function blend_h_8bpc_rvv, export=1, ext=v
-  csrw vxrm, zero
-  la t1, dav1d_obmc_masks
-  add t1, t1, a4
-  add t0, a4, a4
-  add a4, a4, t0
-  srai a4, a4, 2
-  mv t5, a3
-  mv t6, t1
-  li t2, 64
+  li t6, 16
   li t0, 2
   beq a3, t0, 2f
   li t0, 4
   beq a3, t0, 4f
   li t0, 8
   beq a3, t0, 8f
-  mv a7, a4
-  mv a6, a2
-  mv a5, a0
   vsetivli zero, 16, e8, m1, ta, ma
-  j 1f
+  j L(blend_h_epilog)
 8:
   vsetivli zero, 8, e8, mf2, ta, ma
-  j 1f
+  j L(blend_h_epilog)
 4:
   vsetivli zero, 4, e8, mf4, ta, ma
-  j 1f
+  j L(blend_h_epilog)
 2:
   vsetivli zero, 2, e8, mf8, ta, ma
+L(blend_h_epilog):
+  csrw vxrm, zero
+  la t1, dav1d_obmc_masks
+  add t1, t1, a4
+  add t0, a4, a4
+  add a4, a4, t0
+  srai a4, a4, 2
+  mv a6, a2
+  mv a5, a0
+  mv a7, a4
+  mv t5, a3
+  li t2, 64
   j 1f
 0:
-  addi a5, a5, 16
-  addi a6, a6, 16
+  add a5, a5, t6
+  add a6, a6, t6
+  add t1, t1, a4
   mv a0, a5
   mv a2, a6
   mv a4, a7
-  mv t1, t6
+  sub t1, t1, a4
 1:
   addi a4, a4, -2
   lbu t3, (t1)
@@ -165,7 +189,7 @@ function blend_h_8bpc_rvv, export=1, ext=v
   vse8.v v1, (t0)
   add a0, t0, a1
   bgtz a4, 1b
-  addi t5, t5, -16
+  sub t5, t5, t6
   bgtz t5, 0b
   ret
 endfunc
